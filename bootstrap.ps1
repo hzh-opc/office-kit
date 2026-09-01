@@ -20,6 +20,14 @@ Set-Location $KIT_DIR
 # 显式锁定 venv 路径，避免被宿主环境的 UV_PROJECT_ENVIRONMENT 劫持到全局 venv。
 $env:UV_PROJECT_ENVIRONMENT = ".venv"
 
+# ---------- 国内源优先（规划文档 L18，可用环境变量覆盖） ----------
+$INDEX_URL = if ($env:OFFICE_KIT_PYPI_MIRROR) { $env:OFFICE_KIT_PYPI_MIRROR } else { "https://pypi.tuna.tsinghua.edu.cn/simple" }
+$HF_MIRROR = if ($env:OFFICE_KIT_HF_MIRROR) { $env:OFFICE_KIT_HF_MIRROR } else { "https://hf-mirror.com" }
+$env:PIP_INDEX_URL = $INDEX_URL
+$env:UV_INDEX_URL = $INDEX_URL
+$env:HF_ENDPOINT = $HF_MIRROR
+Write-Host "     国内源: PyPI=$INDEX_URL  HF=$HF_MIRROR（如需官方源：\$env:OFFICE_KIT_PYPI_MIRROR='https://pypi.org/simple'）"
+
 $PY_BIN = "3.13"
 Write-Host ">>> office-kit 初始化开始：KIT_DIR=$KIT_DIR"
 
@@ -50,7 +58,7 @@ foreach ($f in $reqFiles) {
   Write-Host "        - $($f.FullName)"
   Get-Content $f.FullName | Add-Content $REQ_TMP
 }
-uv pip install -r $REQ_TMP
+uv pip install --index-url $INDEX_URL -r $REQ_TMP
 Remove-Item $REQ_TMP -Force
 
 # ---------- 3. 校验 / 修复组件 ----------

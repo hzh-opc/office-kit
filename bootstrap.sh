@@ -20,6 +20,15 @@ cd "$KIT_DIR"
 # 显式锁定 venv 路径，避免被宿主环境的 UV_PROJECT_ENVIRONMENT 劫持到全局 venv。
 export UV_PROJECT_ENVIRONMENT=".venv"
 
+# ---------- 国内源优先（规划文档 L18，可用环境变量覆盖） ----------
+# PyPI 镜像（依赖安装）；HuggingFace 镜像（faster-whisper 等大模型下载）。
+INDEX_URL="${OFFICE_KIT_PYPI_MIRROR:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+HF_MIRROR="${OFFICE_KIT_HF_MIRROR:-https://hf-mirror.com}"
+export PIP_INDEX_URL="$INDEX_URL"      # pip 兼容
+export UV_INDEX_URL="$INDEX_URL"        # uv 兼容（若支持）
+export HF_ENDPOINT="$HF_MIRROR"         # 大模型下载走镜像
+echo "     国内源: PyPI=$INDEX_URL  HF=$HF_MIRROR（如需官方源：OFFICE_KIT_PYPI_MIRROR=https://pypi.org/simple）"
+
 PY_BIN="3.13"
 FORCE_VENV=0
 for arg in "$@"; do
@@ -58,7 +67,7 @@ if [ ! -s "$REQ_TMP" ]; then
 fi
 echo "      依赖清单来自："
 ls components/*/requirements.txt 2>/dev/null | sed 's/^/        - /'
-uv pip install -r "$REQ_TMP"
+uv pip install --index-url "$INDEX_URL" -r "$REQ_TMP"
 rm -f "$REQ_TMP"
 
 # ---------- 3. 校验 / 修复组件 ----------

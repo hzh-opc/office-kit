@@ -1,9 +1,10 @@
 #!/bin/sh
 # office-kit git 包装器（可选）
 #
-# ~/Repositories/office-kit 是含真实 .git 的本地仓库（git 源），且仓库级配置 core.optionalLocks=false；
-# 因此普通 git 即可正常工作。本脚本保留为统一入口，显式加 --no-optional-locks 以兼容
-# 个别仍走锁的路径，并避免误用宿主全局 git 配置。
+# office-kit git 包装器
+#
+# 环境对 .git 工作树的 git 写操作施加了 lock 写保护（index.lock 无法 unlink）；
+# 本脚本统一加 --no-optional-locks 以绕过该写保护，并避免误用宿主全局 git 配置。
 #
 # 用法：./ogit <任意 git 子命令>
 # 例：  ./ogit status

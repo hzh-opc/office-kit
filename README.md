@@ -27,6 +27,7 @@ office-kit/
 ├── config/                   # 本地配置（.env.example 为样例，.env 不入库）
 ├── office-kit.sh             # 统一入口（macOS / Linux）
 ├── office-kit.ps1            # 统一入口（Windows）
+├── kit.py                    # 动态注册与分发器（扫描 manifest.json，生成"功能记录"）
 ├── bootstrap.sh              # 一键初始化（macOS / Linux）：建 venv + 装依赖 + 修复组件
 ├── bootstrap.ps1             # 一键初始化（Windows）
 └── ogit                      # git 包装器（统一入口，已配置免锁）
@@ -56,8 +57,11 @@ cd office-kit
 
 脚本行为：
 1. 用 `uv venv --python 3.13` 创建 `.venv`（显式锁定 `UV_PROJECT_ENVIRONMENT=.venv`，避免被宿主环境劫持到全局 venv）；
-2. 合并 `components/*/requirements.txt` 并 `uv pip install -r` 安装全部依赖；
+2. 合并 `components/*/requirements.txt` 并 `uv pip install --index-url <国内源>` 安装全部依赖；
 3. 校验四个组件目录，缺失则从 `~/.workbuddy/skills/` 重新复制。
+
+> **国内源优先**（规划文档 L18）：默认 PyPI 走清华镜像 `https://pypi.tuna.tsinghua.edu.cn/simple`、HuggingFace 走 `https://hf-mirror.com`（供 `faster-whisper` 等大模型下载）。
+> 可用环境变量覆盖：`OFFICE_KIT_PYPI_MIRROR`（PyPI）、`OFFICE_KIT_HF_MIRROR`（HF）。恢复官方源：`OFFICE_KIT_PYPI_MIRROR=https://pypi.org/simple`。
 
 > 注：三组件 requirements.txt 已合并去重装进同一个 `.venv`；doc-layout 仅新增 `reportlab`。
 > 如需 Word→PDF 的 `docx2pdf`（Windows/macOS 需本机安装 Word），可单独 `uv pip install docx2pdf`。
@@ -93,6 +97,28 @@ cd office-kit
 > 说明：`md-pdf` 是通用转换器（读外部 Markdown → 排版 PDF，reportlab 内置 CJK 字体，跨平台开箱即用）；
 > `docx`/`pptx`/`html`/`render` 当前以内置《版面美学观》样例为输入生成演示交付物，若要转用户自有内容，
 > 需扩展对应脚本使其接受 `-i` 输入（沿用 `build_md_pdf.py` 的入参范式即可）。
+
+## 组件治理（动态注册 / 重叠比对 / 反馈）
+
+工具包采用「可拆卸」模块化：`kit.py` 启动时**扫描 `components/*/manifest.json`**，自动生成"功能记录"
+（命令 → 组件 → 入口的映射），取代手写静态分发。新增/移除组件只需增删其目录与 `manifest.json`，无需改入口脚本。
+
+```bash
+python kit.py                 # 列出全部已注册命令（含入口路径）
+python kit.py list            # 同上
+python kit.py overlaps        # 列出跨组件功能重叠（capabilities 标签比对）
+python kit.py doctor          # 环境与组件自检：venv 解释器 + 各组件/入口完整性
+python kit.py run extract ... # 显式分发（run 可省略，直接 <command> 即可）
+python kit.py extract ... --dry-run   # 仅打印将执行的命令，不真正运行
+
+# 组件问题反馈（规划文档 L13）：生成含组件名的反馈文档到 workbench/feedback/
+python kit.py feedback --component info-extract \
+  --title "OCR 中文标点丢失" --detail "..." --severity high --repro "router.py 扫描件.pdf"
+```
+
+- **动态注册**：每个组件在 `manifest.json` 声明 `component` / `capabilities` / `commands`（含 `name`、`aliases`、`entry`、`category`、`description`）。`kit.py` 据此分发，双平台入口 `office-kit.sh` / `office-kit.ps1` 均委托它，行为一致。
+- **重叠比对**：`capabilities` 标签被 ≥2 个组件声明即判为重叠，`python kit.py overlaps` 自动检出；逐项比对与"更佳调用方案"裁决见开发工作区 `规划文档/功能重叠比对.md`（如 `pdf-text-extract` / `office-text-extract` 在 `info-extract` 与 `desensitization-sop` 重叠，敏感文档优先 `desen`）。
+- **反馈文档**：调用组件发现问题（不改组件本体）时，用 `feedback` 生成带组件名、时间、严重度、环境、复现步骤的结构化文档，便于反馈给组件开发者；分发/自检失败时也会提示使用该命令。
 
 ## 跨组件闭环
 

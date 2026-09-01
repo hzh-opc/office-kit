@@ -7,6 +7,8 @@
     "ocr",
     "video-transcript",
     "image-understanding",
+    "video-online",
+    "account-enum",
     "pdf-text-extract",
     "office-text-extract"
   ],

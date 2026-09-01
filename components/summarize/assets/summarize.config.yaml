@@ -1,0 +1,24 @@
+# summarize 技能默认配置模板（assets/summarize.config.yaml）
+# 复制到工作区并改名 summarize.config.yaml 即可按项目覆盖；留空项沿用默认值。
+# 也可由智能体在对话中协助生成/修改。
+
+mode: local                 # local | cloud | hybrid
+language: auto              # auto | zh | en
+
+summary_length:
+  strategy: ratio           # count | ratio | chars
+  count: 5                  # strategy=count 时生效（摘要句数）
+  ratio: 0.3                # strategy=ratio 时生效（0~1）
+  chars: 600                # strategy=chars 时生效（摘要字数上限）
+
+keywords_count: 8           # 提取关键词数量
+tone: neutral               # neutral | concise | professional | casual（仅影响 brief 语气）
+max_input_chars: 200000     # 超长文本滑动窗口阈值（字符数）
+quality_eval: true          # 是否输出质量评估
+keep_local_copy: true       # 是否保留本地抽取副本（用于对比）
+compare_cloud: false        # 云端处理后是否自动对比并记录改进建议
+
+desensitization: auto       # auto | off  （auto=已装 desensitization-sop 则协同；缺失则跳过）
+
+feedback_email: hzh.opc@foxmail.com
+feedback_dir: ./.summarize_feedback

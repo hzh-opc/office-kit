@@ -1,0 +1,118 @@
+{
+  "capabilities": {
+    "desensitization": {
+      "purpose": "上云前对敏感信息脱敏（脱敏/处理/回填/复核闭环）",
+      "keywords": ["脱敏", "desensitiz", "隐私", "敏感信息", "sensitive", "去标识", "脱敏网关"],
+      "fallback": "local",
+      "fallback_note": "缺失时仅本地处理，原始文本不出本机；若用户强制上云仅送 brief 紧凑中间产物并提示隐私风险"
+    },
+    "ocr": {
+      "purpose": "图片 / 扫描件 / 截图转文字",
+      "keywords": ["ocr", "光学字符", "图片转文字", "图像文字", "识别文字", "image to text", "截图转文字", "扫描件"],
+      "fallback": "ask",
+      "fallback_note": "缺失时请用户直接提供文本，或安装 OCR 技能"
+    },
+    "speech_transcription": {
+      "purpose": "音频 / 语音转文字（ASR）",
+      "keywords": ["语音", "转录", "转写", "speech", "transcription", "asr", "音频转文字", "听写", "字幕生成"],
+      "fallback": "ask",
+      "fallback_note": "缺失时请用户提供文字稿，或安装语音转录技能"
+    },
+    "video_transcript": {
+      "purpose": "视频转文字 / 字幕 / 文案提取",
+      "keywords": ["视频", "文案提取", "字幕", "视频转文字", "video", "transcript", "口播", "短视频文案", "视频文稿"],
+      "fallback": "ask",
+      "fallback_note": "缺失时请用户提供文字稿或字幕，或安装视频文案提取技能"
+    },
+    "document_text": {
+      "purpose": "docx / pdf / office / ppt 文档落地为文本",
+      "keywords": ["docx 转文本", "docx 解析", "docx 提取", "pdf 提取文字", "pdf 转文本", "document to text", "pdf to text", "office 解析", "文档解析", "文档转文本", "word 解析", "ppt 转文字"],
+      "fallback": "ask",
+      "fallback_note": "缺失时请用户导出为 .txt/.md 或安装文档处理技能"
+    },
+    "web_fetch": {
+      "purpose": "按给定 URL 抓取网页内容为文本（非联网搜索；联网检索见 search 能力）",
+      "keywords": ["网页抓取", "web fetch", "fetch url", "url抓取", "爬虫", "crawler", "抓取网页", "fetch webpage", "网页内容获取", "scrape url"],
+      "fallback": "tool",
+      "fallback_note": "缺失时回退到内置 WebFetch 工具按 URL 抓取（抓取内容可能含敏感信息，仍需过脱敏协同）；注意与 search 区分：本能力取「指定 URL 的文本」，search 取「联网检索结果」"
+    },
+    "knowledge_base": {
+      "purpose": "摘要/要点沉淀进知识库、笔记或长期记忆",
+      "keywords": ["知识管理", "知识库联动", "笔记", "笔记管理", "沉淀", "obsidian", "notion", "语雀", "flomo", "第二大脑", "卡片笔记", "kbase", "knowledge_base", "knowledge base 联动"],
+      "fallback": "local",
+      "fallback_note": "缺失时把「摘要 + 要点 + 来源」沉淀到本地 ./要点沉淀/YYYYMMDD.md（纯 markdown，便于日后导入任意知识库）"
+    },
+    "translation": {
+      "purpose": "多语摘要 / 把摘要翻译为目标语言",
+      "keywords": ["翻译", "translate", "多语", "多语言", "译文", "translation", "i18n", "本地化", "译后", "中英互译"],
+      "fallback": "tool",
+      "fallback_note": "缺失时如需多语摘要，仅对 --brief 紧凑中间产物(或本地短摘要)送云端翻译，原始长文不上云；否则提示用户安装翻译技能"
+    },
+    "rag": {
+      "purpose": "基于原文的问答式展开（检索增强/局部精准问答），让用户就摘要要点做「溯源式」追问",
+      "keywords": ["rag", "检索增强", "retrieval", "retrieval-augmented", "检索增强生成", "向量检索", "向量检索问答", "语义检索问答", "本地知识库问答", "rag 问答"],
+      "fallback": "local",
+      "fallback_note": "缺失时本技能「源文忠实」的索引/定位/回查机制即轻量本地 RAG：用关键词/句在原文精准取片段做局部问答，无需外部 RAG 技能"
+    },
+    "search": {
+      "purpose": "摘要后续处理的受控联网补全（外部补充），仅当原文不足时启用且须三段标记",
+      "keywords": ["联网搜索", "web search", "search", "搜索", "检索网页", "tavily", "perplexity", "搜索引擎", "联网检索", "search skill", "联网补全"],
+      "fallback": "tool",
+      "fallback_note": "缺失时回退内置 WebSearch 工具做受控补全，输出须按【原文】/【联网补全】/【处理结果】三段标记，外部内容不得混入看似原文"
+    },
+    "mindmap": {
+      "purpose": "把摘要要点可视化为思维导图/结构化脑图，放大摘要可探索性",
+      "keywords": ["思维导图", "mindmap", "mind map", "脑图", "markmap", "xmind", "mermaid", "可视化脑图", "结构化导图", "导图", "思维图"],
+      "fallback": "local",
+      "fallback_note": "缺失时本技能直接输出层级要点大纲（markdown 缩进或 mermaid 代码块），可一键粘贴进 markmap/XMind/语雀等脑图工具，无需外部技能；另含原生 mindmap_import.py 反向导入（脑图/大纲→嵌套大纲/树/json，可选还原摘要），并支持 --markmap 生成自包含 HTML 直接渲染交互脑图，形成双向闭环"
+    },
+    "diagram": {
+      "purpose": "把摘要中的流程/结构/架构画成结构化图示（流程图/时序图/架构图/类图等），放大摘要的过程与结构",
+      "keywords": ["流程图", "架构图", "时序图", "类图", "用例图", "diagram", "flowchart", "mermaid图", "plantuml", "drawio", "图示", "示意图", "结构图", "uml"],
+      "fallback": "local",
+      "fallback_note": "缺失时本技能输出 mermaid 代码块（flowchart/sequence/class）或 drawio 文本，可直接在支持 mermaid 的渲染器/编辑器预览，无需外部技能"
+    },
+    "graph": {
+      "purpose": "从摘要要点抽取实体与关系，构建知识图谱/关系网络（节点-边可视化），放大要点的关联性",
+      "keywords": ["知识图谱", "关系图谱", "实体关系", "图谱", "knowledge graph", "关系网络", "network graph", "实体网络", "图数据库", "关系图", "nebula", "neo4j"],
+      "fallback": "local",
+      "fallback_note": "缺失时本技能输出 mermaid graph（graph TD）代码块或 markdown 邻接表，标注实体与关系，可一键导入 neo4j/图数据库/可视化工具"
+    },
+    "entity_extract": {
+      "purpose": "从摘要/原文抽取实体、关系与关键要素（命名实体识别、信息抽取、三元组/事件抽取），放大摘要的可结构化性",
+      "keywords": ["实体抽取", "命名实体", "实体识别", "关系抽取", "信息抽取", "entity extraction", "entity recognition", "三元组抽取", "事件抽取", "要素抽取", "结构化抽取"],
+      "fallback": "local",
+      "fallback_note": "缺失时本技能用关键词/正则在原文做轻量实体候选列表（实体—类型—出现句），提示可安装 NER 技能提升质量；绝不因缺失报错"
+    },
+    "ppt": {
+      "purpose": "把摘要/要点生成演示文稿（pptx/幻灯片），放大摘要的可呈现性",
+      "keywords": ["演示文稿生成", "ppt 生成", "pptx 生成", "ppt 制作", "幻灯片制作", "演示文稿制作", "powerpoint 制作", "slides 制作", "pptx", "生成ppt", "演示文稿创作", "deck 生成"],
+      "fallback": "local",
+      "fallback_note": "缺失时本技能输出结构化 PPT 大纲（每页标题 + 要点 + 备注的 markdown 分级），用户可一键粘贴进 PowerPoint/语雀/腾讯文档等，无需外部技能"
+    },
+    "chart": {
+      "purpose": "把摘要中的结构化数据/对比项渲染为图表（柱状图/折线图/饼图/数据可视化），放大摘要的可读性",
+      "keywords": ["图表生成", "柱状图生成", "折线图生成", "饼图生成", "散点图生成", "echarts", "plotly", "统计图生成", "图表绘制", "生成图表", "数据可视化图表", "xychart", "图表制作", "数据图表生成"],
+      "fallback": "local",
+      "fallback_note": "缺失时本技能输出 markdown 数据表 + 趋势文字描述，用户可粘贴进 Excel/飞书多维表/图表工具；或给出 mermaid xychart 代码块（若渲染器支持）"
+    },
+    "qa_router": {
+      "purpose": "把摘要/要点路由到合适的问答技能，做基于原文的多轮追问与分派（问题→技能/答案分发）",
+      "keywords": ["问答路由", "问题路由", "qa router", "qa 路由", "question routing", "多轮问答", "问答分发", "问答编排", "问题分派", "faq 路由"],
+      "fallback": "local",
+      "fallback_note": "缺失时本技能用「源文忠实」索引/回查 + --cite 溯源在原文做局部问答，按关键词在原文精准取片段作答，无需外部问答路由技能；另含原生 qa_router.py 多轮状态机（JSON session 持久化上下文、追问指代消解、needs_external 标记）作为本地兜底"
+    },
+    "podcast": {
+      "purpose": "把摘要/要点转为播客或口播音频（文本→语音/音频生成），放大摘要的「可听性」",
+      "keywords": ["播客生成", "podcast 生成", "音频生成", "语音合成", "tts", "口播稿", "声音生成", "播客制作", "音频内容生成", "有声摘要"],
+      "fallback": "local",
+      "fallback_note": "缺失时本技能输出口播稿（纯文本/markdown 分级讲稿），用户可一键粘贴进任意 TTS / 播客工具生成音频，无需外部技能；另含原生 podcast.py 口播稿生成脚本（复用 summarize 抽核心句作章节、估算口播时长，零依赖），并支持 --tts 可选直接合成音频（edge-tts 免费无密钥 / openai / azure，均 import guard 优雅降级，零依赖默认不受影响）"
+    },
+    "spreadsheet": {
+      "purpose": "把摘要中的结构化数据/对比项生成表格或解析已有表格（电子表格/CSV/多维表），放大摘要的「可计算性」",
+      "keywords": ["表格处理", "电子表格", "spreadsheet", "excel 生成", "csv 生成", "表格生成", "多维表", "表格制作", "数据表生成", "表格解析"],
+      "fallback": "local",
+      "fallback_note": "缺失时本技能输出 markdown 表格 / CSV 文本（可由 structured_summary.py 预抽取结构），用户可粘贴进 Excel/飞书多维表，无需外部技能；另含原生 spreadsheet.py 表格生成/解析脚本（输出 CSV / 自包含 HTML 多表格 / markdown 表，零依赖），并支持 --format xlsx 经 openpyxl 生成真正 .xlsx 工作簿（未装则优雅降级提示，零依赖默认不受影响）"
+    }
+  }
+}

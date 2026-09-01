@@ -1,0 +1,33 @@
+[project]
+name = "doc-layout-aesthetics"
+version = "1.0.0"
+description = "《版面美学观》交付物生成依赖项目（docx/pptx/html/pdf），由 uv 管理虚拟环境。"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "hzh.opc (Huang Zenghao)", email = "hzh.opc@foxmail.com" },
+]
+requires-python = ">=3.11"
+dependencies = [
+    "python-docx>=1.2.0",
+    "python-pptx>=1.0.2",
+    "reportlab>=5.0.0",
+]
+
+# docx2pdf 是 Windows/macOS 专属（驱动本机 Word 转 PDF），Linux 上运行时 import 必失败；
+# 拆为可选 extra，避免 Linux 拉取无用包。安装：`uv sync --extra word` 或 `pip install docx2pdf`
+[project.optional-dependencies]
+word = [
+    "docx2pdf>=0.1.8",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv]
+package = false

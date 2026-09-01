@@ -1,0 +1,21 @@
+# 虚拟环境 / 缓存 / 临时（均含可能敏感的中间产物，绝不入库）
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.cache/
+.tmp/
+.DS_Store
+*.egg-info/
+build/
+dist/
+# 本地产物（转录结果）
+*.transcript.out/
+
+# 安全扫描产物
+.codebuddy/
+
+# 验证脚本生成的临时产物（测试运行期生成，非源码，绝不入库）
+_verify_out*/
+tests/fixtures/

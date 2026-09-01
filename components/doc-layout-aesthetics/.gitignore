@@ -1,0 +1,13 @@
+# uv 虚拟环境（本地生成，不入库/不打包）
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+# pytest 缓存
+.pytest_cache/
+# 字体二进制（每个 OTF/TTF/TTC ~25MB，总 100MB+，不进 git；
+# 通过 fonts/install_fonts.sh --online 下载，或从 npmmirror 离线拉取；见 ../FONTS.md）
+fonts/common/
+fonts/SHA256SUMS
+# 安全扫描本地缓存（含项目记忆 db，本地产物不入库）
+.codebuddy/

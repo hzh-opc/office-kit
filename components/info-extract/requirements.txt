@@ -1,0 +1,41 @@
+# info-extract 运行时依赖（阶段一~四：音频转录 / 视频文案 / OCR / 画面解读）
+# Python 版本：标准 CPython >=3.10 且 <3.14（onnxruntime 无 free-threaded wheel），锁定 3.13
+# 安装：见 install.py / install.sh（自动建隔离 venv 并 pip install -r requirements.txt）
+
+# 数组/数值
+numpy>=1.24
+# 音频解码：PyAV 自带 ffmpeg 库，零系统依赖（本机实测无系统 ffmpeg，故不走系统 ffmpeg 二进制）
+av>=11.0
+# 默认本地转录引擎：faster-whisper（CTranslate2，跨平台、完全离线、数据不出本机）
+faster-whisper>=1.0
+
+# 阶段二（视频文案）复用上述依赖：PyAV 既抽音轨也解码视频帧；
+# 帧写出用标准库 zlib 手写 PNG（规避本机 ffmpeg 图像编码器受限），零新依赖。
+
+# 阶段三（OCR，本地优先、完全离线）依赖：
+# 图像读取/预处理（EXIF 校正、归一化、去噪，PIL 实现，轻量广泛可用）
+Pillow>=10.0
+# 本地 OCR 引擎：rapidocr（PP-OCRv6，模型随 wheel 捆绑，完全离线，数据不出本机）
+rapidocr>=3.9
+# rapidocr 推理后端（onnxruntime，无 free-threaded wheel，故锁定 CPython<3.14）
+onnxruntime>=1.19
+# 图片型 / 扫描件 PDF 页面渲染（PDFium C 实现，对畸形 PDF 稳健，完全离线）
+pypdfium2>=4.30
+
+# 阶段四（画面解读 / 本地 VLM 视觉理解）依赖说明：
+#   - 本技能**零新增 Python 依赖**即可接入 VLM：经 ollama 的 HTTP REST API（标准库 urllib，
+#     http://localhost:11434）发送图片 base64 + 提示词，不引入 ollama Python 包或额外网络库。
+#   - ollama 为「用户自装的外部运行时」（非 pip 依赖）：需用户自行 `brew install ollama` 并
+#     `ollama pull qwen2.5vl:7b`（或 3b/32b 等，按 --vision-tier 选档）。未装时 VisionModule 优雅
+#     降级为「仅 OCR 文字 + 提示上云提质」，不静默失败。
+#   - 档位自适应缓存文件：scripts/.vision_tier.json（安装时探测最优档落盘；运行时复探可下调一档）。
+#   - 视频关键帧采样复用上述 PyAV + 标准库 PNG（utils.image.write_png_rgb），无新依赖。
+
+# 阶段五（在线/加密视频，已实现，本地优先、默认不上云）依赖说明：
+#   - 在线视频下载走 yt-dlp（pip 可选依赖）：`pip install yt-dlp`（或 `brew install yt-dlp`）。
+#     yt-dlp 为「用户自装的外部工具」，**不强制安装**——未装时 VideoOnlineModule 优雅降级为
+#     仅支持「浏览器播放中捕获」回退（依赖 browser 技能），或给出清晰安装引导，不静默失败。
+#   - 加密/DRM 视频回退「浏览器播放+捕获」依赖 browser 技能（外部技能，非 pip 依赖）：
+#     捕获产物经 --capture-path 传入，模块不留存副本（D3/keep=False）。
+#   - 转录/抽帧/输出复用阶段一~四既有依赖（PyAV + faster-whisper + rapidocr 等），零新依赖。
+#   - 强约束：副本默认不保存（D3），仅产出文案/字幕/结构化，不产出视频副本；加密显式法律风险提示（§4 边界 #2）。

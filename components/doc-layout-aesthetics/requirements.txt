@@ -1,0 +1,7 @@
+# doc-layout-aesthetics 组件依赖（与上游 pyproject.toml 保持一致）
+# 排版美化交付：docx / pptx / html / pdf，以及 Markdown→PDF 直转
+python-docx>=1.2.0
+python-pptx>=1.0.2
+reportlab>=5.0.0
+# 可选（Word→PDF，需本机安装 Word；Linux 不可用）：
+# docx2pdf>=0.1.8

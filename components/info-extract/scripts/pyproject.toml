@@ -1,0 +1,17 @@
+[project]
+name = "info-extract"
+version = "0.6.3"
+description = "信息抽取技能：音频转录/视频文案/OCR/画面解读/在线·加密视频均已实现，复合文档抽取规划中；本地优先、按需载入、可插拔 Provider"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "numpy>=1.24",
+    "av>=11.0",                 # PyAV：自带 ffmpeg 解码，零系统依赖
+    "faster-whisper>=1.0",      # 默认本地转录 provider（CTranslate2，离线）
+    "Pillow>=10.0",             # 图像读取/预处理（OCR / 视觉）
+    "rapidocr>=3.9",            # 本地 OCR（PP-OCRv6，模型随 wheel 捆绑）
+    "onnxruntime>=1.19",        # rapidocr 推理后端（无 free-threaded wheel，锁定 <3.14）
+    "pypdfium2>=4.30",          # 图片型/扫描件 PDF 页面渲染
+]
+
+[tool.uv]
+package = false

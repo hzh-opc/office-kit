@@ -7,7 +7,9 @@
     "render-docx",
     "render-pptx",
     "render-html",
-    "render-pdf"
+    "render-pdf",
+    "docx-to-pdf",
+    "tencent-doc"
   ],
   "commands": [
     {
@@ -39,6 +41,18 @@
       "entry": "scripts/build_all.py",
       "category": "美化交付",
       "description": "一键构建 docx/pptx/html [--pdf]（--out 目录）"
+    },
+    {
+      "name": "pdf",
+      "entry": "scripts/build_pdf.py",
+      "category": "美化交付",
+      "description": "docx → PDF 直转（自动探测引擎：LibreOffice/docx2pdf/WPS/reportlab；--out 目录 [--docx 路径] [--engine auto|libreoffice|docx2pdf|wps|reportlab]）"
+    },
+    {
+      "name": "tencent-doc",
+      "entry": "scripts/build_tencent_doc.py",
+      "category": "美化交付",
+      "description": "Markdown → 腾讯文档云端并套用版面美学（<输入.md> [--title 标题]；需 tencent-docs 插件且宿主已连接腾讯文档）"
     }
   ]
 }

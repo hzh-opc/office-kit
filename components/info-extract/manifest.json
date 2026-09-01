@@ -1,0 +1,22 @@
+{
+  "component": "info-extract",
+  "display_name": "info-extract 内容抽取",
+  "description": "音频转录 / OCR / 视频文案 / 画面解读 / 文档文本提取（本地优先、隐私闭环）",
+  "capabilities": [
+    "transcribe-audio",
+    "ocr",
+    "video-transcript",
+    "image-understanding",
+    "pdf-text-extract",
+    "office-text-extract"
+  ],
+  "commands": [
+    {
+      "name": "extract",
+      "aliases": ["info-extract"],
+      "entry": "scripts/router.py",
+      "category": "抽取处理链",
+      "description": "转录/OCR/视频/画面解读/文档文本提取"
+    }
+  ]
+}

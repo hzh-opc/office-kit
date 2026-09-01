@@ -1,0 +1,22 @@
+{
+  "component": "desensitization-sop",
+  "display_name": "desensitization-sop 脱敏",
+  "description": "本地脱敏（PII/密级/密钥），含自动解密与自动 OCR 后处理",
+  "capabilities": [
+    "pdf-text-extract",
+    "office-text-extract",
+    "decrypt-office",
+    "decrypt-pdf",
+    "desen-pii",
+    "desen-secret"
+  ],
+  "commands": [
+    {
+      "name": "desen",
+      "aliases": ["desensitization-sop"],
+      "entry": "scripts/desensitize.py",
+      "category": "抽取处理链",
+      "description": "本地脱敏（PII/密级/密钥），自动解密+OCR"
+    }
+  ]
+}

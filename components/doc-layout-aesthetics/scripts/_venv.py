@@ -43,6 +43,14 @@ def resolve_venv(root):
     active = os.environ.get("VIRTUAL_ENV")
     if active:
         return os.path.abspath(active)
+    # 治理对齐（2026-09-01，office-kit 集成层）：office-kit 部署场景下，
+    # 优先复用 kit 自带 .venv（若存在），避免落到全局默认环境造成依赖错位。
+    kit_root = os.environ.get("OFFICE_KIT_ROOT")
+    if kit_root:
+        kit_venv = os.path.abspath(os.path.expanduser(kit_root))
+        kit_venv = os.path.join(kit_venv, ".venv")
+        if os.path.isdir(kit_venv):
+            return kit_venv
     if _is_workbuddy_host():
         # 治理对齐：宿主平台默认 = 全局共享默认环境（依赖并入、不另建 venv）
         return default_env_dir()

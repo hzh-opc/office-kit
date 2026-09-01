@@ -4,7 +4,7 @@
 # 用途：从零重建或修复 office-kit 运行环境，三步幂等、可重复执行：
 #   1) 创建 uv 管理的虚拟环境 .venv（Python 3.13）
 #   2) 合并各组件 requirements.txt 并安装全部依赖
-#   3) 校验/修复组件（缺失则从 ~/.workbuddy/skills 重新复制）
+#   3) 校验组件（缺失则提示手动恢复；~/.workbuddy/skills 现为 office-kit 转向器，不作复制源）
 #
 # 前置：已安装 uv（https://docs.astral.sh/uv/）。脚本依赖 uv 管理 .venv 与依赖。
 # 用法：
@@ -70,21 +70,18 @@ ls components/*/requirements.txt 2>/dev/null | sed 's/^/        - /'
 uv pip install --index-url "$INDEX_URL" -r "$REQ_TMP"
 rm -f "$REQ_TMP"
 
-# ---------- 3. 校验 / 修复组件 ----------
-echo "[3/3] 校验/修复组件..."
-SRC_ROOT="$HOME/.workbuddy/skills"
+# ---------- 3. 校验组件 ----------
+echo "[3/3] 校验组件..."
 COMPONENTS="info-extract desensitization-sop summarize doc-layout-aesthetics"
 for comp in $COMPONENTS; do
   if [ -d "components/$comp" ]; then
     echo "      ✓ $comp 存在"
   else
-    if [ -d "$SRC_ROOT/$comp" ]; then
-      echo "      + 缺失 $comp，从 $SRC_ROOT/$comp 重新复制"
-      cp -R "$SRC_ROOT/$comp" "components/$comp"
-      find "components/$comp" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-    else
-      echo "      ⚠ 缺失 $comp，且源 $SRC_ROOT/$comp 不存在，请手动放入该组件" >&2
-    fi
+    echo "      ⚠ 缺失组件 $comp" >&2
+    echo "        本工具包的组件（components/）即为权威实现；~/.workbuddy/skills/ 下同名目录" >&2
+    echo "        现在仅作为 office-kit 的『调用转向器』（仅含 SKILL.md，无实现脚本），" >&2
+    echo "        不再可作为组件自愈的复制源。请将 $comp 恢复到 components/$comp" >&2
+    echo "        （从 office-kit 发布包/源重新放置），再运行本脚本。" >&2
   fi
 done
 

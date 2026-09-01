@@ -1,0 +1,18 @@
+{
+  "component": "summarize",
+  "display_name": "summarize 摘要提炼",
+  "description": "长文本/文档/转录稿摘要、要点提取与关键词（纯标准库、离线优先）",
+  "capabilities": [
+    "summarize",
+    "extract-keywords"
+  ],
+  "commands": [
+    {
+      "name": "summarize",
+      "aliases": ["summary"],
+      "entry": "scripts/summarize.py",
+      "category": "抽取处理链",
+      "description": "摘要/提炼/关键词"
+    }
+  ]
+}

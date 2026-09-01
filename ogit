@@ -1,7 +1,7 @@
 #!/bin/sh
 # office-kit git 包装器（可选）
 #
-# ~/office-kit 已是含真实 .git 的本地仓库，且仓库级配置 core.optionalLocks=false，
+# ~/Repositories/office-kit 是含真实 .git 的本地仓库（git 源），且仓库级配置 core.optionalLocks=false；
 # 因此普通 git 即可正常工作。本脚本保留为统一入口，显式加 --no-optional-locks 以兼容
 # 个别仍走锁的路径，并避免误用宿主全局 git 配置。
 #

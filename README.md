@@ -122,27 +122,31 @@ uv add -r components/desensitization-sop/requirements.txt
   （`components/doc-layout-aesthetics/fonts/install_fonts.{sh,ps1}`）；
   `md-pdf`（reportlab）内置 CJK 字体，无需额外安装即可输出中文 PDF
 
-## 仓库与工作区（定位）
+## 仓库与工作区（三仓结构定位）
 
-- **代码仓库（本目录 `~/office-kit`）**：工具包本体，含真实 `.git` 的本地仓库，纳入 git 版本管理。GitHub 为**唯一提交副本**（本地可随时删除重建，未提交改动无需保留）。
+office-kit 采用**三处仓库**结构，职责分离、互不污染：
+
+- **本地仓库 `~/Repositories/office-kit`（git 源）**：工具包本体的 git 版本库，含真实 `.git`，纳入 git 管理；GitHub 为**唯一提交副本**（本地可随时删除重建，未提交改动无需保留）。
   - 入库范围：源代码、组件、配置样例、入口脚本、依赖声明（`pyproject.toml` / `uv.lock` / `requirements.txt`）、`bootstrap.*`、`ogit`。
   - **不入库**：`.venv/`、`workbench/` 运行产物、`config/.env`、密钥文件（详见 `.gitignore`）。
-- **开发工作区 `~/WorkBuddy/Skill-Dev/office-kit`**：与本仓库平行的开发伴随区，**不含 `.git`**，仅保存开发文档与**隐私隔离**资料——`规划文档/`、`日志/`、`依赖审计报告/` 等过程性文档，不纳入代码仓库，避免污染工具包本体。
+- **工具仓库 `~/office-kit`（部署 / 干净副本）**：由本地仓库同步而来的**真实可运行副本**，**不含 `.git`**，仅用于部署与日常调用，不承载版本历史。
+- **开发工作区 `~/WorkBuddy/Skill-Dev/office-kit`**：与本地仓库平行的开发伴随区，**不含 `.git`**，仅保存开发文档与**隐私隔离**资料——`规划文档/`、`日志/`、`依赖审计报告/` 等过程性文档，不纳入代码仓库，避免污染工具包本体。
 
-> 审计报告、架构决策、阶段性开发日志等过程性文档统一存放于开发工作区；代码仓库内仅保留可复现运行所必需的代码与配置。
+> 审计报告、架构决策、阶段性开发日志等过程性文档统一存放于开发工作区；本地仓库内仅保留可复现运行所必需的代码与配置。
 
-### 在本仓库执行 git 操作
+### 在本地仓库执行 git 操作
 
-环境对 `~/office-kit` 作为工作树的 git 写操作施加了 **lock 写保护**（标准 `git add` / `commit` 会因 `index.lock` / `HEAD.lock` 无法清理而失败，只读操作如 `status` / `rev-parse` 正常）。
+环境对 `~/Repositories/office-kit` 作为工作树的 git 写操作施加了 **lock 写保护**（标准 `git add` / `commit` 会因 `index.lock` / `HEAD.lock` 无法清理而失败，只读操作如 `status` / `rev-parse` 正常）。
 
-已落地解决方案：仓库级配置 `core.optionalLocks = false`，使所有 git 写操作跳过可选锁，无需额外标志。所有操作统一经本仓库内的 `ogit` 包装器（等价 `git --no-optional-locks`，并避免误用宿主全局 git 配置）：
+已落地解决方案：仓库级配置 `core.optionalLocks = false`，使所有 git 写操作跳过可选锁，无需额外标志。所有操作统一经本地仓库内的 `ogit` 包装器（等价 `git --no-optional-locks`，并避免误用宿主全局 git 配置）：
 
 ```bash
+cd ~/Repositories/office-kit
 ./ogit status
 ./ogit add -A
 ./ogit commit -m "描述"
 ```
 
-> 默认分支 `main`。如需彻底重建：删掉 `~/office-kit` 与远程仓库，再 `git clone` / 重新放入代码并 `./bootstrap.sh` 即可，`.venv` 与未提交改动均不依赖保留。
+> 默认分支 `main`。如需彻底重建：删掉 `~/Repositories/office-kit`（本地仓库）与远程仓库，再 `git clone` / 重新放入代码并 `./bootstrap.sh` 即可；`~/office-kit`（部署副本）可随时由本地仓库重新同步生成，`.venv` 与未提交改动均不依赖保留。
 >
 > 推送 GitHub 需显式授权：`git push -u origin main`（首次推送前请确认 origin 已指向你的仓库，且已获得授权）。

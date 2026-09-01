@@ -1,20 +1,20 @@
 # office-kit 统一入口（Windows PowerShell）
-# 用法: .\office-kit.ps1 <component> [参数...]
-#   extract   -> info-extract
-#   desen     -> desensitization-sop
-#   summarize -> summarize
+#
+# 动态分发：委托 kit.py 扫描 components/*/manifest.json 生成"功能记录"后调用对应组件。
+# 与 office-kit.sh 行为一致，达成双平台入口统一（含此前缺失的 doc-layout 美化命令）。
+#
+# 用法:
+#   .\office-kit.ps1 <command> [组件参数...]
+#   抽取处理链: extract / desen / summarize
+#   美化交付:   md-pdf / docx / pptx / html / render
+#   治理:       list | overlaps | doctor | feedback | run <command>
 param(
-  [Parameter(Position=0, Mandatory=$true)] [string]$Component,
+  [Parameter(Position=0, Mandatory=$false)] [string]$Command,
   [Parameter(Position=1, ValueFromRemainingArguments=$true)] [string[]]$Args
 )
 $KitDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $VenvPy = Join-Path $KitDir ".venv\Scripts\python.exe"
-switch ($Component) {
-  "extract"    { & $VenvPy (Join-Path $KitDir "components\info-extract\scripts\router.py") @Args }
-  "desen"      { & $VenvPy (Join-Path $KitDir "components\desensitization-sop\scripts\desensitize.py") @Args }
-  "summarize"  { & $VenvPy (Join-Path $KitDir "components\summarize\scripts\summarize.py") @Args }
-  default {
-    Write-Host "用法: .\office-kit.ps1 <extract|desen|summarize> [参数...]"
-    exit 1
-  }
-}
+$env:UV_PROJECT_ENVIRONMENT = Join-Path $KitDir ".venv"
+if (Test-Path $VenvPy) { $Py = $VenvPy } else { $Py = "python3" }
+if (-not $Command) { $Command = "list" }
+& $Py (Join-Path $KitDir "kit.py") $Command @Args

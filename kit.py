@@ -247,8 +247,15 @@ def cmd_run(commands, argv):
     if not venv_py.is_file():
         sys.stderr.write("✗ 虚拟环境缺失：%s\n→ 请先运行 ./bootstrap.sh 初始化。\n" % venv_py)
         return 3
+    # 集成层统一 venv 约定（2026-09-01，office-kit 设计评审反馈）：
+    # 显式向组件进程注入 venv 真相源，避免组件自行 re-exec 到错误路径。
+    #   UV_PROJECT_ENVIRONMENT → kit 根 .venv（doc-layout / info-extract 优先读取）
+    #   OFFICE_KIT_ROOT         → kit 根目录（doc-layout 兜底优先复用 kit/.venv）
+    env = dict(os.environ)
+    env["UV_PROJECT_ENVIRONMENT"] = str(venv_py.parent)
+    env["OFFICE_KIT_ROOT"] = str(KIT_DIR)
     try:
-        proc = subprocess.run([str(venv_py), str(entry)] + rest)
+        proc = subprocess.run([str(venv_py), str(entry)] + rest, env=env)
         return proc.returncode
     except Exception as exc:  # noqa: BLE001
         sys.stderr.write("✗ 调用失败：%s\n" % exc)

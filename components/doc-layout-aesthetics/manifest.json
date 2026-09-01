@@ -1,0 +1,44 @@
+{
+  "component": "doc-layout-aesthetics",
+  "display_name": "doc-layout-aesthetics 版面美化",
+  "description": "中文排版美学渲染：Markdown→PDF、精排 Word/PPT、响应式 HTML（自动调用）",
+  "capabilities": [
+    "md-to-pdf",
+    "render-docx",
+    "render-pptx",
+    "render-html",
+    "render-pdf"
+  ],
+  "commands": [
+    {
+      "name": "md-pdf",
+      "entry": "scripts/build_md_pdf.py",
+      "category": "美化交付",
+      "description": "Markdown 直转排版 PDF（-i 输入 -o 输出 [-t 标题]）"
+    },
+    {
+      "name": "docx",
+      "entry": "scripts/build_docx.py",
+      "category": "美化交付",
+      "description": "《版面美学观》精排 Word 样例（--out 目录）"
+    },
+    {
+      "name": "pptx",
+      "entry": "scripts/build_pptx.py",
+      "category": "美化交付",
+      "description": "精排 PPT 样例（--out 目录）"
+    },
+    {
+      "name": "html",
+      "entry": "scripts/build_html.py",
+      "category": "美化交付",
+      "description": "响应式 HTML 样例（--out 目录）"
+    },
+    {
+      "name": "render",
+      "entry": "scripts/build_all.py",
+      "category": "美化交付",
+      "description": "一键构建 docx/pptx/html [--pdf]（--out 目录）"
+    }
+  ]
+}

@@ -43,18 +43,11 @@ def inline(text):
     """把 Markdown 内联语法转成 reportlab 迷你 HTML。"""
     text = esc(text)
     # 行内代码 `code`：纯 ASCII 用等宽 Courier，含中文用 CJK + 深红强调
-    # 保护行内代码：先用占位符替换，跑完加粗/斜体/链接/图片正则后再还原，
-    # 避免代码内的 `*`/`_`/链接语法被误判为强调标记（曾导致 `*args`、`**kwargs`、
-    # `test_*`、运算符 `*` 等常见写法直接崩溃，或把 `</font>` 边界吞进 `<i>` 嵌套）。
-    code_tags = []
     def _code(m):
         c = m.group(1)
         if contains_cjk(c):
-            tag = '<font name="CJK" color="#9E2B25">%s</font>' % c
-        else:
-            tag = '<font name="Courier" color="#9E2B25" size="9">%s</font>' % c
-        code_tags.append(tag)
-        return "\x00C%d\x00" % (len(code_tags) - 1)
+            return '<font name="CJK" color="#9E2B25">%s</font>' % c
+        return '<font name="Courier" color="#9E2B25" size="9">%s</font>' % c
     text = re.sub(r'`([^`]+)`', _code, text)
     # 加粗
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
@@ -66,10 +59,6 @@ def inline(text):
     text = re.sub(r'\[([^\]]+)\]\([^)\s]+\)', r'\1', text)
     # 图片占位（块级图片在 parse_blocks 单独处理，这里仅兜底行内残留）
     text = re.sub(r'!\[([^\]]*)\]\([^)\s]+\)', r'\1', text)
-    # 还原行内代码占位符
-    if code_tags:
-        text = re.sub(r'\x00C(\d+)\x00',
-                      lambda m: code_tags[int(m.group(1))], text)
     return text
 
 

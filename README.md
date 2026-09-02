@@ -57,8 +57,9 @@ cd office-kit
 
 脚本行为：
 1. 用 `uv venv --python 3.13` 创建 `.venv`（显式锁定 `UV_PROJECT_ENVIRONMENT=.venv`，避免被宿主环境劫持到全局 venv）；
-2. 合并 `components/*/requirements.txt` 并 `uv pip install --index-url <国内源>` 安装全部依赖；
-3. 校验四个组件目录，缺失则从 `~/.workbuddy/skills/` 重新复制。
+2. 修复/补齐组件：缺失/损坏时在线下载（复用 `kit.py repair`，与 `check`/`upgrade` 同一套远程源设计）；
+3. 合并 `components/*/requirements.txt` 并 `uv pip install --index-url <国内源>` 安装全部依赖；
+4. 校验四个组件目录，并补齐 `workbench/` 阶段子目录（inbox/extract/desen/summary/render/archive/logs）。
 
 > **国内源优先**（规划文档 L18）：默认 PyPI 走清华镜像 `https://pypi.tuna.tsinghua.edu.cn/simple`、HuggingFace 走 `https://hf-mirror.com`（供 `faster-whisper` 等大模型下载）。
 > 可用环境变量覆盖：`OFFICE_KIT_PYPI_MIRROR`（PyPI）、`OFFICE_KIT_HF_MIRROR`（HF）。恢复官方源：`OFFICE_KIT_PYPI_MIRROR=https://pypi.org/simple`。
@@ -108,6 +109,9 @@ python kit.py                 # 列出全部已注册命令（含入口路径）
 python kit.py list            # 同上
 python kit.py overlaps        # 列出跨组件功能重叠（capabilities 标签比对）
 python kit.py doctor          # 环境与组件自检：venv 解释器 + 各组件/入口完整性
+python kit.py check           # 检测组件完整性（本地）+ 新版本（远程），只读、不下载
+python kit.py upgrade         # 在线升级组件到远程最新版（--force 强制同步 / --yes 跳过确认）
+python kit.py repair          # 在线修复损坏/缺失组件（--yes 跳过确认）
 python kit.py run extract ... # 显式分发（run 可省略，直接 <command> 即可）
 python kit.py extract ... --dry-run   # 仅打印将执行的命令，不真正运行
 
@@ -119,24 +123,34 @@ python kit.py feedback --component info-extract \
 - **动态注册**：每个组件在 `manifest.json` 声明 `component` / `capabilities` / `commands`（含 `name`、`aliases`、`entry`、`category`、`description`）。`kit.py` 据此分发，双平台入口 `office-kit.sh` / `office-kit.ps1` 均委托它，行为一致。
 - **重叠比对**：`capabilities` 标签被 ≥2 个组件声明即判为重叠，`python kit.py overlaps` 自动检出；逐项比对与"更佳调用方案"裁决见开发工作区 `规划文档/功能重叠比对.md`（如 `pdf-text-extract` / `office-text-extract` 在 `info-extract` 与 `desensitization-sop` 重叠，敏感文档优先 `desen`）。
 - **反馈文档**：调用组件发现问题（不改组件本体）时，用 `feedback` 生成带组件名、时间、严重度、环境、复现步骤的结构化文档，便于反馈给组件开发者；分发/自检失败时也会提示使用该命令。
+- **升级/修复**：`check` 检测组件损坏（manifest/入口/标志文件缺失）与远程新版本；`upgrade` / `repair` 在线下载修复，更新后自动重识能力并记录上下游对接（`workbench/logs/component-registry.json`）与操作流水（`component-events.log`），旧版自动归档到 `workbench/archive/components/`。详见下方「组件升级 / 修复」。
 
 ## 跨组件闭环
 
 `summarize` 会自动发现同包内的 `desensitization-sop`（扫描 `components/` 目录），
 实现「脱敏 → 处理 → 回填 → 复核」链路。合并包内已内置该发现逻辑，无需 WorkBuddy。
 
-## 独立更新组件
+## 组件升级 / 修复（在线）
 
-每个组件是自包含目录，可单独替换而不影响其他组件：
+`kit.py` 内置远程源（默认 `hzh-opc/office-kit@main`，公开仓库匿名下载；可用环境变量 `OFFICE_KIT_REPO` / `OFFICE_KIT_BRANCH` 覆盖为私有仓库/镜像）。每个组件在 `manifest.json` 声明 `version`，据此做版本比对与损坏检测。
 
 ```bash
-# 仅更新脱敏组件（例：从新版本覆盖）
-cp -R /path/to/new-desensitization-sop/* components/desensitization-sop/
-# 若新版本依赖变化，再补装
-uv add -r components/desensitization-sop/requirements.txt
+python kit.py check                      # 检测：本地完整性 + 远程新版本（只读）
+python kit.py check --offline            # 仅本地完整性检测（不联网）
+python kit.py upgrade                    # 升级全部组件到远程最新版
+python kit.py upgrade info-extract --yes # 只升级指定组件，跳过交互确认
+python kit.py upgrade --force            # 即使本地已最新也强制重下载同步
+python kit.py repair                     # 修复损坏/缺失组件（默认：本地目录 ∪ 远程清单）
+python kit.py repair summarize --yes     # 修复指定组件
 ```
 
-`doc-layout-aesthetics` 自带 `pyproject.toml` + `uv.lock`，与其上游同步时直接覆盖 `components/doc-layout-aesthetics/` 即可。
+- **检测**：`check` 比对 `components/*/manifest.json` 的 `version` 与远程 `main` 分支同名清单；本地损坏 = 目录缺失 / manifest 无法解析 / 命令入口缺失 / 标志文件（`SKILL.md`）缺失。
+- **下载**：`upgrade` / `repair` 从远程 tarball 抽取目标组件覆盖安装；旧版先归档到 `workbench/archive/components/`（非硬删），更新后自动清理 `__pycache__`。
+- **能力识别与上下游对接**：更新后重新扫描 manifest 识别组件能力（命令/能力标签），并更新 `workbench/logs/component-registry.json`（上游来源 repo/branch/version + 下游命令/能力/组件间共享能力）与 `component-events.log`（操作流水）。
+- **依赖变化**：升级后若组件 `requirements.txt` 变化，需重跑 `./bootstrap.sh` 重装依赖（脚本会提示）。
+
+> 离线场景（无网）仍可手动替换：`cp -R /path/to/new-desensitization-sop/* components/desensitization-sop/`，再 `uv add -r components/desensitization-sop/requirements.txt` 补装依赖。
+> `doc-layout-aesthetics` 自带 `pyproject.toml` + `uv.lock`，与其上游同步时直接覆盖 `components/doc-layout-aesthetics/` 即可。
 
 ## 跨平台可移植
 

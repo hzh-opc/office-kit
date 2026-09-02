@@ -68,28 +68,26 @@ def _detect_runtime_problem() -> str | None:
 
 
 def _venv_python() -> Path | None:
-    """找到运行所需的隔离 venv 解释器（跨平台）。
+    """解析隔离 venv 解释器（跨平台），按优先级：
 
-    解析顺序（与 office-kit 集成层治理约定一致，2026-09-01）：
-      1. UV_PROJECT_ENVIRONMENT —— kit / 宿主显式指定的 venv（最高优先级）；
-      2. VIRTUAL_ENV            —— 已激活的 venv；
-      3. SCRIPT_DIR/.venv       —— 独立技能时期的同目录布局（回退，保持兼容）。
+    1. UV_PROJECT_ENVIRONMENT（宿主/kit 显式注入，office-kit 经 kit.py 已设置）；
+    2. VIRTUAL_ENV（已激活的 venv，source .venv/bin/activate 或 uv run 注入）；
+    3. 脚本同目录 .venv（独立技能时期布局，回退保持兼容）。
 
-    组件被拔插进任意 kit 时，只要调用方设置了 UV_PROJECT_ENVIRONMENT
-    （office-kit.sh / kit.py 已设置），本函数即返回该 venv，组件无需感知 kit 目录布局。
+    与 doc-layout-aesthetics/scripts/_venv.py:resolve_venv 约定一致，
+    使组件被「拔插」进任意 kit 时只要调用方设置了 UV_PROJECT_ENVIRONMENT，
+    组件自身无需感知 kit 目录布局、零改造即可运行。
     """
-    candidates = []
-    env_venv = os.environ.get("UV_PROJECT_ENVIRONMENT")
-    if env_venv:
-        candidates.append(os.path.expanduser(env_venv))
-    active = os.environ.get("VIRTUAL_ENV")
-    if active:
-        candidates.append(active)
-    candidates.append(str(SCRIPT_DIR / ".venv"))  # 回退：独立技能布局
+    candidates: List[Path] = []
+    env_uv = os.environ.get("UV_PROJECT_ENVIRONMENT")
+    if env_uv:
+        candidates.append(Path(os.path.expanduser(env_uv)))
+    env_virtual = os.environ.get("VIRTUAL_ENV")
+    if env_virtual:
+        candidates.append(Path(os.path.expanduser(env_virtual)))
+    candidates.append(SCRIPT_DIR / ".venv")  # 回退：独立技能用法
     for base in candidates:
-        base = os.path.abspath(base)
-        sub = "Scripts/python.exe" if sys.platform.startswith("win") else "bin/python"
-        cand = Path(base) / sub
+        cand = base / "Scripts" / "python.exe" if sys.platform.startswith("win") else base / "bin" / "python"
         if cand.is_file():
             return cand
     return None
@@ -98,7 +96,7 @@ def _venv_python() -> Path | None:
 def ensure_runtime() -> None:
     """在导入任何重型依赖前，保证运行环境就绪。
 
-    - 裸 python 缺 numpy/av 时：优先自动复用 kit / 已激活 / 同目录 venv（仅一次，带 env 防递归标记）；
+    - 裸 python 缺 numpy/av 时：优先自动复用到同目录 .venv（仅一次，带 env 防递归标记）；
     - 否则给出明确 install 指引并干净退出（exit 2），避免抛出裸 ModuleNotFoundError traceback。
     """
     missing = _detect_runtime_problem()
@@ -117,12 +115,13 @@ def ensure_runtime() -> None:
 
     print(
         "❌ 未检测到运行环境依赖（缺少 '" + (missing or "numpy/av") + "'）。\n"
-        "info-extract 优先复用 kit / 已激活的虚拟环境（UV_PROJECT_ENVIRONMENT / VIRTUAL_ENV）；\n"
-        "本地独立部署则使用 scripts/.venv。请先安装运行环境：\n"
+        "info-extract 依赖隔离在虚拟环境中，venv 解析顺序：UV_PROJECT_ENVIRONMENT → VIRTUAL_ENV → scripts/.venv。\n"
+        "请先安装运行环境：\n"
         "  bash install.sh            # 或：python install.py\n"
         "随后可用对应 venv 解释器运行：\n"
         "  <venv>/bin/python scripts/router.py --check\n"
-        "（也可直接裸 python 运行，脚本会自动复用上述 venv；若均不存在则需先 install。）",
+        "（也可直接裸 python 运行：若已设 UV_PROJECT_ENVIRONMENT/VIRTUAL_ENV 或 scripts/.venv 存在，"
+        "脚本会自动复用对应环境；否则需先 install。）",
         file=sys.stderr,
     )
     sys.exit(2)

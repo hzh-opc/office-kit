@@ -106,7 +106,22 @@ python router.py "https://www.douyin.com/user/MXoxxxx" --enum-interval 5 --enum-
 
 ## 五、安装与跨平台
 
-参见 `AGENT_INSTALL.md`（Agent 安装指引）与 `install.py`/`install.sh`（一键建隔离 venv 并安装依赖）。
+参见 `AGENT_INSTALL.md`（Agent 安装指引）与 `install.py`/`install.sh`（一键建隔离 venv 并安装依赖）；升级用 `upgrade.py`（从 GitHub 拉最新、原子替换、失败回滚）。
 运行要求：标准 CPython ≥3.10 且 <3.14（锁定 3.13）；音频解码用 PyAV（自带 ffmpeg，无需系统安装 ffmpeg）。
+
+### 5.1 部署场景与用法（S1 便携版 / S2 套件 / S3 共存 / S4 仅组件）
+
+| 场景 | 形态 | 用法 |
+|------|------|------|
+| S1 便携版（office-kit 组件） | 仅 CLI（`components/info-extract/`） | 技能触发词不生效；用 `office-kit.sh extract <参数>`（等价 `scripts/router.py`，`--type` 取值见 manifest） |
+| S2 套件作 Agent Skill | office-kit 套件内 | 技能触发词生效，智能体按 frontmatter 触发 |
+| S3 套件 + 部分组件共存 | 混合 | 两者皆可 |
+| S4 仅组件（独立安装） | `~/.workbuddy/skills/info-extract` | 技能触发词生效；CLI 直接 `python scripts/router.py ...` |
+
+> `--type` 取值：`ocr` / `vision` / `transcript` / `doc_extract` / `video` / `video_online` / `video_online_enum`。
+
+### 5.2 协同技能缺失时的降级行为
+
+未检出 `desensitization-sop`（DESEN）时**自动降级、不报错**：本地处理正常进行，仅在需要上云脱敏时由智能体层提示「未安装脱敏技能」；同理 browser 技能缺失时在线加密视频自动回退或提示。检测逻辑见 `scripts/skill_bridge.py`（`python scripts/router.py --check` 可见协同能力可用性）。
 
 详细设计、模块契约、Provider 接口见 `references/reference.md`；决策记录见 `CHANGELOG.md`。

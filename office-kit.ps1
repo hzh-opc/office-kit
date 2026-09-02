@@ -15,6 +15,6 @@ param(
 $KitDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $VenvPy = Join-Path $KitDir ".venv\Scripts\python.exe"
 $env:UV_PROJECT_ENVIRONMENT = Join-Path $KitDir ".venv"
-if (Test-Path $VenvPy) { $Py = $VenvPy } else { $Py = "python3" }
+if (Test-Path $VenvPy) { $Py = $VenvPy } else { $Py = "python" }
 if (-not $Command) { $Command = "list" }
 & $Py (Join-Path $KitDir "kit.py") $Command @Args

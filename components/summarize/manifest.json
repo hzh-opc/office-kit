@@ -1,5 +1,7 @@
 {
   "component": "summarize",
+  "version": "1.0.0",
+  "dependencies": ["desensitization-sop"],
   "display_name": "summarize 摘要提炼",
   "description": "长文本/文档/转录稿摘要、要点提取与关键词（纯标准库、离线优先）",
   "capabilities": [

@@ -2,6 +2,12 @@
 # -*- coding: utf-8 -*-
 """info-extract · 一键安装脚本（跨平台，兼容 WorkBuddy / Claude / Codex / OpenClaw）。
 
+【本体获取】本脚本只负责「建 venv + 装依赖 + 自检」，不下载技能本体；技能本体
+  通过以下方式之一获取（须先就位再运行本脚本）：
+  1. git clone git@github.com:hzh-opc/info-extract.git
+  2. 从发行包解压覆盖本目录
+  升级请运行 upgrade.py（从 GitHub 拉最新、原子替换、失败回滚）。
+
 功能：
   1. 在 <技能目录>/scripts/.venv 创建隔离 venv（CPython 3.13，与 DESEN 一致）；
   2. 安装 requirements.txt 依赖（numpy / av / faster-whisper / Pillow / rapidocr / onnxruntime / pypdfium2）；

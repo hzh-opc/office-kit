@@ -14,6 +14,13 @@
 # 说明：本技能保持「零依赖回退为底线」——jieba 是「默认开、缺失自动降级」，
 #       装不装都不影响脚本运行。安装仅为提升中文分词质量。
 #       若目标 python 无 pip（如 WorkBuddy 受管默认环境 envs/default），脚本自动改用 uv 安装。
+#
+# 本体获取方式（本脚本只装依赖、不下载本体）：
+#   本技能本体（SKILL.md + scripts/ + assets/ + references/）请先通过以下任一方式获取：
+#     1) git clone git@github.com:hzh-opc/summarize.git            # SSH
+#        （或 HTTPS：git clone https://github.com/hzh-opc/summarize.git）
+#     2) 下载发行包（GitHub Releases 的 source tarball）后解压
+#   获取本体后，在本目录运行 ./install.sh 安装 jieba 可选依赖即可；升级本体见 ./upgrade.sh。
 
 set -euo pipefail
 

@@ -5,8 +5,9 @@
 __pycache__/
 *.pyc
 
-# 工作台运行产物（保留目录结构，忽略内容）
-workbench/**/*
+# 工作台运行产物（忽略内容，但保留 .gitkeep 以固化目录结构）
+workbench/**
+!workbench/**/
 !workbench/**/.gitkeep
 
 # 本地密钥/配置（按需填写，不入库）

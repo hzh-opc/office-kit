@@ -2,9 +2,19 @@
 # =============================================================================
 # doc-layout-aesthetics 升级脚本（macOS / Linux 通用）
 #
-# 从 GitHub 远程仓库拉取最新版，同步到技能副本（~/.workbuddy/skills/...）。
+# 从 GitHub 远程仓库拉取最新版，同步到技能副本。
 # 副本保持干净：不含 .git / __pycache__ / .pytest_cache / .DS_Store /
 # 字体二进制（fonts/common/、fonts/SHA256SUMS 由用户按需另装）。
+#
+# 【主从关系】独立仓库 hzh-opc/doc-layout-aesthetics 是**唯一上游**；
+#   office-kit 套件内的 components/doc-layout-aesthetics 副本由套件统一入口
+#   `kit.py upgrade doc-layout-aesthetics` 定期同步，**勿用本脚本直接覆盖**。
+#
+# 【适用场景】本脚本仅用于 S4「仅组件独立部署」：把组件装到独立技能副本
+#   （~/.workbuddy/skills/doc-layout-aesthetics，或 --target 指定目录）。
+#   若本机已装 office-kit 套件（技能副本已是转向器，SKILL.md 含 redirect_to），
+#   请改用套件统一入口升级：`python kit.py upgrade doc-layout-aesthetics`。
+#   本脚本检测到目标为转向器时会告警并中止，避免覆盖转向机制。
 #
 # 用法：
 #   ./upgrade_skill.sh                 # 默认升级到 WorkBuddy 技能副本
@@ -46,6 +56,17 @@ warn() { printf '\033[33m[警告]\033[0m %s\n' "$*"; }
 fail() { printf '\033[31m[错误]\033[0m %s\n' "$*"; exit 1; }
 
 command -v git >/dev/null 2>&1 || fail "未找到 git，请先安装 git（macOS: brew install git）"
+
+# ---------- 守卫：检测目标是否为 office-kit 转向器 ----------
+# 本机已装 office-kit 套件时，~/.workbuddy/skills/doc-layout-aesthetics/SKILL.md
+# 是转向器（含 redirect_to ~/office-kit/），组件权威副本在套件 components/。
+# 直接跑本脚本会覆盖转向器、且与套件副本双源漂移，故告警并中止。
+if [ -f "$TARGET/SKILL.md" ] && grep -q "redirect_to" "$TARGET/SKILL.md" 2>/dev/null; then
+    warn "目标 $TARGET 当前是 office-kit 转向器（SKILL.md 含 redirect_to）。"
+    warn "本机已装 office-kit 套件时，组件权威副本在 components/，请改用：python kit.py upgrade doc-layout-aesthetics"
+    warn "本脚本仅适用于 S4「仅组件独立部署」；如确需独立部署，请 --target 指向独立副本目录。"
+    exit 1
+fi
 
 # ---------- 检查模式：只比较远程与本地版本 ----------
 if [ "$MODE" = "check" ]; then

@@ -1,5 +1,7 @@
 {
   "component": "doc-layout-aesthetics",
+  "version": "1.0.0",
+  "dependencies": [],
   "display_name": "doc-layout-aesthetics 版面美化",
   "description": "中文排版美学渲染：Markdown→PDF、精排 Word/PPT、响应式 HTML（自动调用）",
   "capabilities": [

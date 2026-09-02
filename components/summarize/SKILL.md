@@ -3,7 +3,7 @@ name: summarize
 description: "为长文本、文档、网页、OCR 识别稿、音频转录稿、视频文案提取稿等自动生成摘要、提取要点与关键词，支持自定义摘要长度。优先本地离线处理（零依赖、跨平台），并支持「云端取方法、本地处理信息」以省 TOKEN、护隐私；可与 desensitization-sop 协同完成脱敏/处理/回填/复核闭环。当用户要求「总结/摘要/概括/提炼要点/提取关键词/归纳」任意形态的长内容时，应使用本技能。"
 version: "1.0.0"
 agent_created: true
-dependencies: ["jieba"]
+pip_dependencies: ["jieba"]
 ---
 
 # 智能摘要技能（summarize）
@@ -40,6 +40,50 @@ dependencies: ["jieba"]
 | 图片 / 扫描件 | 检测 `ocr` 能力：命中则调用 OCR 技能转文字；缺失则 `ask` 降级 |
 | 音频 | 检测 `speech_transcription` 能力：命中则转文字；缺失则 `ask` 降级 |
 | 视频 | 检测 `video_transcript` 能力：命中则转文字/字幕；缺失则 `ask` 降级 |
+
+## CLI 用法（S1 便携版：不经过智能体、直接命令行）
+
+> 若你是**直接拿本技能脚本在终端用**（S1 便携版，不通过智能体加载），本节可快速上手。所有脚本**纯标准库、Python 3.8+**，Windows / macOS / Linux 通用，无需安装任何第三方包即可运行（安装 `jieba` 仅用于提升中文分词质量，可跳过）。
+
+### 快速开始（最常用）
+
+```bash
+# 1) 本地摘要 + 关键词（零依赖，开箱即用）
+python3 scripts/summarize.py 输入.txt --length 5 --keywords 8 --format md
+
+# 2) 一句话核心结论
+python3 scripts/summarize.py 输入.txt --tldr
+
+# 3) 带原文溯源标注（每句标回「见原文第P段·句S」）
+python3 scripts/summarize.py 输入.txt --cite --format txt
+
+# 4) 质量评估（压缩比 / 关键词覆盖 / 综合评分 0~100）
+python3 scripts/summarize.py 输入.txt --eval --format json
+
+# 5) 可选增强：安装 jieba 提升中文分词（不装也自动回退内置分词、不报错）
+./install.sh
+```
+
+### 脚本一览（13 个，均纯标准库、零依赖）
+
+| 脚本 | 用途 | 关键参数 |
+|---|---|---|
+| `summarize.py` | **核心**：抽取式摘要 + 关键词 + 质量评估 | `--length/--ratio/--chars`、`--cite`、`--tldr`、`--brief`、`--eval` |
+| `compare.py` | 本地 × 云端摘要对比 + 改进建议 | `--local`、`--cloud`、`--feedback` |
+| `skill_bridge.py` | 协同技能检测（扫描本机已装技能能力） | `--map`、`--exclude summarize`、`--cap`、`--save-cache` |
+| `diff_summary.py` | 两份文档差异 / 变更摘要 | `--threshold` |
+| `batch_summary.py` | 目录批量摘要 + 索引页 | `--length`、`--out` |
+| `consistency_check.py` | 摘要-原文一致性自检（防幻觉） | `--original`、`--summary`、`--threshold` |
+| `pii_precheck.py` | 上云前 PII 预检 | `--categories`、`--no-context` |
+| `hierarchical_summary.py` | 层级摘要（概览→要点→细节） | `--l2`、`--l3`、`--cite` |
+| `structured_summary.py` | 结构化抽取（问答/列表/定义/表格） | `--mode` |
+| `mindmap_import.py` | 思维导图反向导入 | `--re-summarize`、`--markmap` |
+| `qa_router.py` | 多轮问答状态机 | `--session`、`--question` |
+| `podcast.py` | 口播稿生成 | `--tts`、`--voice`、`--audio` |
+| `spreadsheet.py` | 表格生成 / 解析 | `--format csv/html/md/xlsx`、`--from-json` |
+
+- `summarize.py` / `compare.py` / `skill_bridge.py` 为**核心三脚本**；其余 10 个为**原生增强**（无需外部技能，默认不主动触发，用户要求时即用）。
+- 每个脚本的完整参数：运行 `python3 scripts/<脚本>.py --help`，或见本文件第 4.8 节与 `DEVELOPMENT.md` §6。
 
 ## 处理流程（务必遵循）
 
@@ -174,6 +218,7 @@ $PY $SKILL_DIR/scripts/skill_bridge.py --exclude summarize --cap ocr --quiet && 
 ### 4. 脱敏协同（通用检测，零耦合）
 
 > **零耦合保证**：本技能的脚本（`scripts/summarize.py`、`scripts/compare.py`、`scripts/skill_bridge.py`）**不导入、不调用**任何外部技能。脱敏协同完全在「智能体层」按条件执行——外部技能缺失时脚本天然不会出错。
+> **未检出脱敏技能 = 正常降级，非环境异常**：在「仅组件」场景（S4）下若本机未安装任何脱敏技能（如 `desensitization-sop`），`skill_bridge.py --cap desensitization` 会返回「缺失」，此时**自动降级、不报错、不中断**——脱敏由智能体层按下方 `absent` 分支处理（本地处理，或提示用户确认上云风险）。这是**预期行为**，智能体**不应据此误判为环境异常或报错**。
 
 在执行任何上云操作前，用 `skill_bridge.py` **泛匹配**检测脱敏能力（兼容任意脱敏技能名，而非硬编码 `desensitization-sop` 目录）：
 ```bash

@@ -35,6 +35,24 @@ version: "1.0.0"
 6. **交付前自查**：逐条核对 `references/aesthetics-spec.md` 的「排版自查清单」并排查「反模式」。
 7. **自动化收尾**：编号 / 目录 / 页码 / 页眉用域自动生成；网页输出关闭不必要的动效并满足对比度；输出 PDF 前关闭编辑标记。
 
+## CLI 用法（命令行直跑脚本）
+
+本技能既可被 Agent 按触发词调用（上方「如何使用」），也可作为命令行工具直接跑脚本，二者视角不同：
+
+| 能力 | 命令（WorkBuddy 宿主） | 说明 |
+|---|---|---|
+| Markdown → 排版 PDF | `<默认环境>/bin/python scripts/build_md_pdf.py -i in.md -o out.pdf` | **真实能力**，`-i` 接受任意 Markdown |
+| docx → PDF | `<默认环境>/bin/python scripts/build_pdf.py --docx in.docx --out <目录>` | **真实能力**，自动探测引擎 |
+| 精排 Word 样例 | `<默认环境>/bin/python scripts/build_docx.py --out <目录>` | 内置《版面美学观》样例 |
+| PPT 样例 | `<默认环境>/bin/python scripts/build_pptx.py --out <目录>` | 内置《版面美学观》样例 |
+| 响应式 HTML 样例 | `<默认环境>/bin/python scripts/build_html.py --out <目录>` | 内置《版面美学观》样例 |
+| 一键四件套 | `<默认环境>/bin/python scripts/build_all.py --pdf --out <目录>` | 内置《版面美学观》样例 |
+| 冒烟自检 | `<默认环境>/bin/python scripts/selfcheck.py --build` | 安装后自检 |
+
+> 非宿主（Claude/Codex/OpenClaw）把 `<默认环境>/bin/python` 换成 `uv run python` 或已激活 `.venv` 的 `python`。
+> `<默认环境>` = `~/.workbuddy/binaries/python/envs/default`（详见 [`AGENT_INSTALL.md`](./AGENT_INSTALL.md)）。
+> 一键装依赖并自检：`bash install.sh`。
+
 ## 关键约束（速记）
 
 - 字体 ≤ 3 种；颜色 ≤ 主色 + 3 辅助色。
@@ -48,18 +66,24 @@ version: "1.0.0"
 
 ## 资源
 
+> **能力边界（重要，勿误读为通用交付）**：本仓库的 `build_docx.py` / `build_pptx.py` / `build_html.py` /
+> `build_all.py` **当前以内置《版面美学观》为输入生成演示样例**，尚未支持传入用户自有内容
+> （通用转换 = 待扩展 `-i` 入参）。真正「吃任意输入」的能力目前是：
+> `build_md_pdf.py`（Markdown → PDF，`-i` 输入）、`build_pdf.py`（docx → PDF，`--docx` 输入）、
+> `build_tencent_doc.py`（Markdown → 腾讯文档，`<输入.md>`）。
+
 > **多 Agent 平台安装**：WorkBuddy / Claude Code / Codex / OpenClaw 的安装步骤、venv 两种路线（uv / pip）、字体安装、自检与 FAQ 见 **[`AGENT_INSTALL.md`](./AGENT_INSTALL.md)**。
 
 > **环境（uv 项目）**：本技能的生成脚本依赖 Python 库（python-docx / python-pptx / reportlab），由 **uv** 管理虚拟环境。技能根目录含 `pyproject.toml` + `uv.lock`。可选依赖：`docx2pdf`（仅 Windows/macOS 需本机 Word，用 `uv sync --extra word` 安装）。
-> - **虚拟环境位置（可移植，优先级从高到低）**：① 环境变量 `UV_PROJECT_ENVIRONMENT`（用户/宿主显式指定，**脚本绝不覆盖**）；② `VIRTUAL_ENV`（已激活的 venv）；③ 平台默认——WorkBuddy 宿主（存在 `~/.workbuddy`）→ **全局共享默认环境** `~/.workbuddy/binaries/python/envs/default`（所有技能依赖并入此处、不另建 venv、禁用 `uv sync`）；其他平台 → 项目内 `.venv`。解析逻辑统一在 `scripts/_venv.py`。
+> - **虚拟环境位置（可移植，优先级从高到低）**：① 环境变量 `UV_PROJECT_ENVIRONMENT`（用户/宿主显式指定，**脚本绝不覆盖**）；② `VIRTUAL_ENV`（已激活的 venv）；②.5 `<OFFICE_KIT_ROOT>/.venv`（若经 office-kit 部署、且其 `.venv` 存在，覆盖裸跑脚本落到宿主全局默认环境与 kit 隔离环境不一致的困惑）；③ 平台默认——WorkBuddy 宿主（存在 `~/.workbuddy`）→ **全局共享默认环境** `~/.workbuddy/binaries/python/envs/default`（所有技能依赖并入此处、不另建 venv、禁用 `uv sync`）；其他平台 → 项目内 `.venv`。解析逻辑统一在 `scripts/_venv.py`。
 > - **首次使用（WorkBuddy 宿主）**：依赖已并入全局共享默认环境 `~/.workbuddy/binaries/python/envs/default`，**直接用该环境 python 运行脚本即可**（无需 `uv sync`、不另建 venv）。如需（重）并入依赖（追加式，绝不裁剪他技能）：`uv pip install --python ~/.workbuddy/binaries/python/envs/default/bin/python python-docx python-pptx reportlab pytest`。其他平台（Claude/Codex/OpenClaw）仍用 `uv sync` 建项目内 `.venv`；⚠️ **Windows + Git Bash** 下 `~` 会被展开成 POSIX 路径被 Windows 原生 uv 误解析，请改用显式 Windows 原生路径（PowerShell / CMD / WSL / macOS / Linux 无此问题）。
 > - **运行**：直接 `<默认环境>/bin/python scripts/build_all.py` 即可（宿主自动复用共享默认环境 python、不走 `uv run --project` 以免裁剪他技能依赖）；单独跑某脚本用 `<默认环境>/bin/python scripts/build_pdf.py --out <目录>`（宿主）或 `uv run python scripts/build_pdf.py --out <目录>`（非宿主）。**多平台安装与运行详见 [`AGENT_INSTALL.md`](./AGENT_INSTALL.md)**。
 
 - `references/aesthetics-spec.md` — 完整美学规范（原则详解、参数表、自查清单、反模式、Word 工程实现、常见纸型含手账、网页 / 幻灯片 / 多终端跨媒介要点、**第十二节「腾讯文档云端路径」能力边界与落地**、来源）。排版前必读。
-- `scripts/build_all.py` — **统一入口**：一键构建 docx + pptx + html 三份本地交付物；加 `--pdf` 可额外把 docx 转 PDF。`python scripts/build_all.py --pdf --out <目录>`（不指定 `--out` 时输出到当前目录）。
-- `scripts/build_docx.py` — 精排 Word 文档生成脚本（含表格跨页保护：长表 cantSplit、短表 keepNext）。`uv run python scripts/build_docx.py --out <目录>`。
-- `scripts/build_pptx.py` — PPTX 对照演示生成脚本（本身即七大原则范例：统一色板 / 字体 / 装饰线示范重复，左右对照页示范对比，网格总览示范对齐 + 亲密性，安全区与 ≥18pt 字号示范幻灯片规范）。`uv run python scripts/build_pptx.py --out <目录>`。
-- `scripts/build_html.py` — 响应式 HTML 参考生成脚本（本身即移动优先、多终端自适应演示；用 CSS 容器查询在手机 / 平板 / 桌面三档真实重排）。`uv run python scripts/build_html.py --out <目录>`。
+- `scripts/build_all.py` — **统一入口**：一键构建 docx + pptx + html 三份本地交付物；加 `--pdf` 可额外把 docx 转 PDF。`python scripts/build_all.py --pdf --out <目录>`（不指定 `--out` 时输出到当前目录）。**（当前=内置《版面美学观》样例演示，通用转换待扩展 `-i` 入参）**
+- `scripts/build_docx.py` — 精排 Word 文档生成脚本（含表格跨页保护：长表 cantSplit、短表 keepNext）。`uv run python scripts/build_docx.py --out <目录>`。**（当前=内置《版面美学观》样例演示，通用转换待扩展 `-i` 入参）**
+- `scripts/build_pptx.py` — PPTX 对照演示生成脚本（本身即七大原则范例：统一色板 / 字体 / 装饰线示范重复，左右对照页示范对比，网格总览示范对齐 + 亲密性，安全区与 ≥18pt 字号示范幻灯片规范）。`uv run python scripts/build_pptx.py --out <目录>`。**（当前=内置《版面美学观》样例演示，通用转换待扩展 `-i` 入参）**
+- `scripts/build_html.py` — 响应式 HTML 参考生成脚本（本身即移动优先、多终端自适应演示；用 CSS 容器查询在手机 / 平板 / 桌面三档真实重排）。`uv run python scripts/build_html.py --out <目录>`。**（当前=内置《版面美学观》样例演示，通用转换待扩展 `-i` 入参）**
 - `scripts/build_pdf.py` — 把 docx 转成 PDF，**尽量保证与 Word 文档页面统一**。转换引擎按优先级自动探测（可用 `--engine` 强制）：
   1. **LibreOffice** (`soffice`/`libreoffice`)：直接把真实 docx 转 PDF，保真度最高；
   2. **docx2pdf**（需本机安装 Microsoft Word）：调用 Word 转 PDF；
@@ -102,4 +126,5 @@ version: "1.0.0"
 - **远程仓库**：<https://github.com/hzh-opc/doc-layout-aesthetics>（Apache-2.0，作者 hzh.opc / Huang Zenghao，由 WorkBuddy 协助整理）。
 - **默认安装不包含字体**：仓库不捆绑字体二进制（~150MB 不入 git）；需要 PDF 最佳渲染时按 [`FONTS.md`](./FONTS.md) 或 `fonts/install_fonts.sh|ps1` 安装开源字体（可让 AI Agent 代为执行）。
 - **同步约定**：仓库 ↔ 技能副本之间用 `rsync` 同步，**仅由用户主动发起**；开发迭代先在仓库进行，稳定后再手动同步到技能副本。
+- **office-kit 套件主从关系（2026-09-02 定）**：本独立仓库是**唯一上游**。若本机已装 office-kit 套件，组件权威副本位于套件 `components/doc-layout-aesthetics/`，技能副本 `~/.workbuddy/skills/doc-layout-aesthetics/` 是**转向器**（`redirect_to ~/office-kit/`），升级请用套件统一入口 `python kit.py upgrade doc-layout-aesthetics`，**勿跑 `scripts/upgrade_skill.sh`**（会覆盖转向器、造成双源漂移）。`upgrade_skill.sh` 仅用于 S4「仅组件独立部署」场景。
 - 技能副本本身不建 git；版本历史以仓库为准。`scripts/__pycache__`、`.venv`、`.DS_Store` 不入库（见 `.gitignore`）。

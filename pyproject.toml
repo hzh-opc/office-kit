@@ -1,7 +1,7 @@
 [project]
 name = "office-kit"
 version = "0.1.0"
-description = "合并工具包：info-extract / desensitization-sop / summarize（单文件夹、uv 管理、按办公业务流程组织）"
+description = "合并工具包：info-extract / desensitization-sop / summarize / doc-layout-aesthetics（单文件夹、uv 管理、按办公业务流程组织）"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "av>=11.0",

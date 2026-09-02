@@ -7,7 +7,10 @@
 
 1. 最高优先级：环境变量 ``UV_PROJECT_ENVIRONMENT``（用户/宿主显式指定）；
 2. 其次：已激活的 ``VIRTUAL_ENV``（``source .venv/bin/activate`` 或 ``uv run`` 自动注入）；
-3. 兜底平台默认（见 ``resolve_venv``）：WorkBuddy 宿主 → 全局共享默认环境
+3. office-kit 部署自带的 ``<OFFICE_KIT_ROOT>/.venv``（若存在，见 ``_kit_venv``）；
+   覆盖「开发者/用户裸跑脚本、未设上述变量」时落到宿主全局默认环境与 kit
+   隔离环境不一致的困惑（kit 经 ``UV_PROJECT_ENVIRONMENT`` 调用时本就命中优先级 1）；
+4. 兜底平台默认（见 ``resolve_venv``）：WorkBuddy 宿主 → 全局共享默认环境
    ``~/.workbuddy/binaries/python/envs/default``（依赖经 ``uv pip install --python``
    追加式并入，不另建 venv、禁 ``uv sync``，以免按本技能 pyproject 裁剪他技能依赖）；
    其他平台 → 项目内 ``.venv``（走 ``uv sync``）。
@@ -29,13 +32,30 @@ def _is_workbuddy_host():
     return os.path.isdir(os.path.expanduser("~/.workbuddy"))
 
 
+def _kit_venv():
+    """office-kit 部署自带的隔离 .venv（若存在），作为裸跑兜底。
+
+    office-kit 以组件方式部署本技能时，会在 ``<OFFICE_KIT_ROOT>/.venv`` 维护
+    独立环境（kit.py 已通过 ``UV_PROJECT_ENVIRONMENT`` 注入，此处仅覆盖
+    「开发者/用户直接裸跑脚本、未设该变量」的情形，避免落到宿主全局默认环境
+    与 kit 隔离环境不一致）。非 office-kit 部署（未设 ``OFFICE_KIT_ROOT`` 或其
+    ``.venv`` 不存在）返回 ``None``，不影响既有解析顺序。仅依赖标准库。
+    """
+    root = os.environ.get("OFFICE_KIT_ROOT")
+    if not root:
+        return None
+    venv = os.path.join(os.path.expanduser(root), ".venv")
+    return venv if os.path.isdir(venv) else None
+
+
 def resolve_venv(root):
     """解析虚拟环境目录（按优先级），返回绝对路径。
 
     优先级：
     1. UV_PROJECT_ENVIRONMENT（显式指定，最高优先级，绝不覆盖）；
     2. VIRTUAL_ENV（已激活的 venv）；
-    3. 平台默认：WorkBuddy 宿主 → 目录外缓存 venv；其他平台 → 项目内 .venv。
+    3. office-kit 部署自带的 <OFFICE_KIT_ROOT>/.venv（若存在）；
+    4. 平台默认：WorkBuddy 宿主 → 全局共享默认环境；其他平台 → 项目内 .venv。
     """
     explicit = os.environ.get("UV_PROJECT_ENVIRONMENT")
     if explicit:
@@ -43,14 +63,9 @@ def resolve_venv(root):
     active = os.environ.get("VIRTUAL_ENV")
     if active:
         return os.path.abspath(active)
-    # 治理对齐（2026-09-01，office-kit 集成层）：office-kit 部署场景下，
-    # 优先复用 kit 自带 .venv（若存在），避免落到全局默认环境造成依赖错位。
-    kit_root = os.environ.get("OFFICE_KIT_ROOT")
-    if kit_root:
-        kit_venv = os.path.abspath(os.path.expanduser(kit_root))
-        kit_venv = os.path.join(kit_venv, ".venv")
-        if os.path.isdir(kit_venv):
-            return kit_venv
+    kit = _kit_venv()
+    if kit:
+        return os.path.abspath(kit)
     if _is_workbuddy_host():
         # 治理对齐：宿主平台默认 = 全局共享默认环境（依赖并入、不另建 venv）
         return default_env_dir()

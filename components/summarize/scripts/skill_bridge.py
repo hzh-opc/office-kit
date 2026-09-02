@@ -240,7 +240,7 @@ def load_cache(path):
 
 
 def default_roots():
-    """默认扫描：用户级技能目录 + 当前工作区项目级技能目录 + 合并工具包(office-kit)组件目录。"""
+    """默认扫描：用户级技能目录 + 当前工作区项目级技能目录。"""
     roots = []
     home = os.path.expanduser("~")
     roots.append(os.path.join(home, ".workbuddy", "skills"))
@@ -252,19 +252,6 @@ def default_roots():
         roots.append(os.path.join(os.getcwd(), ".workbuddy", "skills"))
     except Exception:
         pass
-    # 合并工具包（office-kit）内部：<office-kit>/components
-    # 支持环境变量 OFFICE_KIT_ROOT 显式指定；否则按脚本位置反推（跨平台可移植）
-    env_kit = os.environ.get("OFFICE_KIT_ROOT")
-    if env_kit:
-        roots.append(os.path.join(expand(env_kit), "components"))
-    else:
-        try:
-            here = os.path.dirname(os.path.abspath(__file__))
-            # scripts -> summarize -> components -> office-kit
-            kit_root = os.path.dirname(os.path.dirname(os.path.dirname(here)))
-            roots.append(os.path.join(kit_root, "components"))
-        except Exception:
-            pass
     return roots
 
 

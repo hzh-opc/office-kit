@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File scripts\upgrade_skill.ps1   # Windows
 ├── references/
 │   └── aesthetics-spec.md  # 完整美学规范
 ├── scripts/
-│   ├── _venv.py             # 虚拟环境解析（UV_PROJECT_ENVIRONMENT > VIRTUAL_ENV > 平台默认）
+│   ├── _venv.py             # 虚拟环境解析（UV_PROJECT_ENVIRONMENT > VIRTUAL_ENV > OFFICE_KIT_ROOT/.venv(若部署) > 平台默认）
 │   ├── build_all.py        # 统一入口
 │   ├── build_docx.py       # Word 精排（表格跨页保护）
 │   ├── build_pptx.py       # PPT 对照演示

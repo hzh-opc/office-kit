@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # office-kit 一键初始化脚本（Unix / macOS / Linux）
 #
-# 用途：从零重建或修复 office-kit 运行环境，三步幂等、可重复执行：
+# 用途：从零重建或修复 office-kit 运行环境，幂等、可重复执行：
 #   1) 创建 uv 管理的虚拟环境 .venv（Python 3.13）
-#   2) 合并各组件 requirements.txt 并安装全部依赖
-#   3) 校验组件（缺失则提示手动恢复；~/.workbuddy/skills 现为 office-kit 转向器，不作复制源）
+#   2) 修复/补齐组件（缺失/损坏时在线下载，复用 kit.py repair；与 kit.py check/upgrade 同一套远程源设计）
+#   3) 合并各组件 requirements.txt 并安装全部依赖
+#   4) 校验组件 + 补齐 workbench 阶段子目录
 #
 # 前置：已安装 uv（https://docs.astral.sh/uv/）。脚本依赖 uv 管理 .venv 与依赖。
 # 用法：
@@ -42,7 +43,7 @@ done
 echo ">>> office-kit 初始化开始：KIT_DIR=$KIT_DIR"
 
 # ---------- 1. 创建虚拟环境 ----------
-echo "[1/3] 创建虚拟环境 (uv venv --python $PY_BIN)..."
+echo "[1/4] 创建虚拟环境 (uv venv --python $PY_BIN)..."
 if [ -d .venv ] && [ "$FORCE_VENV" -eq 0 ]; then
   echo "      .venv 已存在，跳过创建（--force-venv 可重建）"
 else
@@ -53,8 +54,24 @@ else
   uv venv --python "$PY_BIN" .venv
 fi
 
-# ---------- 2. 安装依赖 ----------
-echo "[2/3] 合并并安装组件依赖 (uv pip install)..."
+# ---------- 2. 修复/补齐组件（缺失/损坏时在线下载，复用 kit.py repair） ----------
+echo "[2/4] 修复/补齐组件（缺失/损坏时在线下载）..."
+if command -v python3 >/dev/null 2>&1 && [ -f "$KIT_DIR/kit.py" ]; then
+  python3 "$KIT_DIR/kit.py" repair --yes \
+    || echo "      ⚠ 在线修复未完全成功（请检查网络或远程源）。可稍后手动：python3 kit.py repair"
+else
+  echo "      ⚠ 未找到 python3 / kit.py，跳过在线修复（仅作目录存在性校验）："
+  for comp in info-extract desensitization-sop summarize doc-layout-aesthetics; do
+    if [ -d "components/$comp" ]; then
+      echo "      ✓ $comp 存在"
+    else
+      echo "      ⚠ 缺失组件 $comp：请从 office-kit 发布包/源恢复到 components/$comp" >&2
+    fi
+  done
+fi
+
+# ---------- 3. 安装依赖 ----------
+echo "[3/4] 合并并安装组件依赖 (uv pip install)..."
 REQ_TMP="$(mktemp)"
 : > "$REQ_TMP"
 for f in components/*/requirements.txt; do
@@ -70,20 +87,23 @@ ls components/*/requirements.txt 2>/dev/null | sed 's/^/        - /'
 uv pip install --index-url "$INDEX_URL" -r "$REQ_TMP"
 rm -f "$REQ_TMP"
 
-# ---------- 3. 校验组件 ----------
-echo "[3/3] 校验组件..."
-COMPONENTS="info-extract desensitization-sop summarize doc-layout-aesthetics"
-for comp in $COMPONENTS; do
+# ---------- 4. 校验组件 + 补齐 workbench 目录 ----------
+echo "[4/4] 校验组件 + 补齐 workbench 目录..."
+for comp in info-extract desensitization-sop summarize doc-layout-aesthetics; do
   if [ -d "components/$comp" ]; then
     echo "      ✓ $comp 存在"
   else
-    echo "      ⚠ 缺失组件 $comp" >&2
-    echo "        本工具包的组件（components/）即为权威实现；~/.workbuddy/skills/ 下同名目录" >&2
-    echo "        现在仅作为 office-kit 的『调用转向器』（仅含 SKILL.md，无实现脚本），" >&2
-    echo "        不再可作为组件自愈的复制源。请将 $comp 恢复到 components/$comp" >&2
-    echo "        （从 office-kit 发布包/源重新放置），再运行本脚本。" >&2
+    echo "      ⚠ 仍缺失组件 $comp：在线修复未成功，请从 office-kit 发布包/源恢复到 components/$comp" >&2
+  fi
+done
+
+# 补齐 workbench 阶段子目录（.gitignore 忽略产物但保留结构，供流水线串接）
+for d in inbox extract desen summary render archive logs; do
+  if [ ! -d "workbench/$d" ]; then
+    mkdir -p "workbench/$d"
+    echo "      + 创建 workbench/$d"
   fi
 done
 
 echo ">>> 初始化完成。"
-echo "    运行 ./office-kit.sh --help 试用各组件；仓库状态用 git / ./ogit 查看。"
+echo "    运行 ./office-kit.sh --help 试用各组件；检查组件完整性/升级：./office-kit.sh check"

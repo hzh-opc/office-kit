@@ -1,5 +1,7 @@
 {
   "component": "info-extract",
+  "version": "0.6.3",
+  "dependencies": ["desensitization-sop"],
   "display_name": "info-extract 内容抽取",
   "description": "音频转录 / OCR / 视频文案 / 画面解读 / 文档文本提取（本地优先、隐私闭环）",
   "capabilities": [
@@ -18,7 +20,7 @@
       "aliases": ["info-extract"],
       "entry": "scripts/router.py",
       "category": "抽取处理链",
-      "description": "转录/OCR/视频/画面解读/文档文本提取"
+      "description": "转录/OCR/视频/画面解读/文档文本提取；--type 取值：ocr/vision/transcript/doc_extract/video/video_online/video_online_enum"
     }
   ]
 }

@@ -1,9 +1,10 @@
 # office-kit 一键初始化脚本（Windows PowerShell）
 #
-# 用途：从零重建或修复 office-kit 运行环境，三步幂等、可重复执行：
+# 用途：从零重建或修复 office-kit 运行环境，幂等、可重复执行：
 #   1) 创建 uv 管理的虚拟环境 .venv（Python 3.13）
-#   2) 合并各组件 requirements.txt 并安装全部依赖
-#   3) 校验/修复组件（缺失则从 ~/.workbuddy/skills 重新复制）
+#   2) 修复/补齐组件（缺失/损坏时在线下载，复用 kit.py repair；与 kit.py check/upgrade 同一套远程源设计）
+#   3) 合并各组件 requirements.txt 并安装全部依赖
+#   4) 校验组件 + 补齐 workbench 阶段子目录
 #
 # 前置：已安装 uv（https://docs.astral.sh/uv/）。
 # 用法（PowerShell）：
@@ -32,21 +33,39 @@ $PY_BIN = "3.13"
 Write-Host ">>> office-kit 初始化开始：KIT_DIR=$KIT_DIR"
 
 # ---------- 1. 创建虚拟环境 ----------
-Write-Host "[1/3] 创建虚拟环境 (uv venv --python $PY_BIN)..."
+Write-Host "[1/4] 创建虚拟环境 (uv venv --python $PY_BIN)..."
 if (Test-Path ".venv") {
   if (-not $ForceVenv) {
     Write-Host "      .venv 已存在，跳过创建（用 -ForceVenv 可重建）"
   } else {
     Write-Host "      -ForceVenv：移除旧 .venv 并重建"
     Remove-Item -Recurse -Force .venv
-    uv venv --python $PY_BIN
+    uv venv --python $PY_BIN .venv
   }
 } else {
   uv venv --python $PY_BIN .venv
 }
 
-# ---------- 2. 安装依赖 ----------
-Write-Host "[2/3] 合并并安装组件依赖 (uv pip install)..."
+# ---------- 2. 修复/补齐组件（缺失/损坏时在线下载，复用 kit.py repair） ----------
+Write-Host "[2/4] 修复/补齐组件（缺失/损坏时在线下载）..."
+if ((Get-Command python -ErrorAction SilentlyContinue) -and (Test-Path "kit.py")) {
+  python kit.py repair --yes
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "      ⚠ 在线修复未完全成功（请检查网络或远程源）。可稍后手动：python kit.py repair"
+  }
+} else {
+  Write-Host "      ⚠ 未找到 python / kit.py，跳过在线修复（仅作目录存在性校验）："
+  foreach ($comp in @("info-extract", "desensitization-sop", "summarize", "doc-layout-aesthetics")) {
+    if (Test-Path "components\$comp") {
+      Write-Host "      ✓ $comp 存在"
+    } else {
+      Write-Warning "      ⚠ 缺失组件 $comp：请从 office-kit 发布包/源恢复到 components\$comp"
+    }
+  }
+}
+
+# ---------- 3. 安装依赖 ----------
+Write-Host "[3/4] 合并并安装组件依赖 (uv pip install)..."
 $REQ_TMP = Join-Path $env:TEMP "ok_reqs_$(Get-Random).txt"
 "" | Set-Content $REQ_TMP
 $reqFiles = Get-ChildItem components\*\requirements.txt -ErrorAction SilentlyContinue
@@ -61,23 +80,25 @@ foreach ($f in $reqFiles) {
 uv pip install --index-url $INDEX_URL -r $REQ_TMP
 Remove-Item $REQ_TMP -Force
 
-# ---------- 3. 校验 / 修复组件 ----------
-Write-Host "[3/3] 校验/修复组件..."
-$SRC_ROOT = Join-Path $HOME ".workbuddy\skills"
-$COMPONENTS = @("info-extract", "desensitization-sop", "summarize", "doc-layout-aesthetics")
-foreach ($comp in $COMPONENTS) {
+# ---------- 4. 校验组件 + 补齐 workbench 目录 ----------
+Write-Host "[4/4] 校验组件 + 补齐 workbench 目录..."
+foreach ($comp in @("info-extract", "desensitization-sop", "summarize", "doc-layout-aesthetics")) {
   if (Test-Path "components\$comp") {
     Write-Host "      ✓ $comp 存在"
   } else {
-    $src = Join-Path $SRC_ROOT $comp
-    if (Test-Path $src) {
-      Write-Host "      + 缺失 $comp，从 $src 重新复制"
-      Copy-Item -Recurse $src "components\$comp"
-      Get-ChildItem "components\$comp" -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
-    } else {
-      Write-Warning "      ⚠ 缺失 $comp，且源 $src 不存在，请手动放入该组件"
-    }
+    Write-Warning "      ⚠ 仍缺失组件 $comp：在线修复未成功，请从 office-kit 发布包/源恢复到 components\$comp"
+  }
+}
+
+# 补齐 workbench 阶段子目录（.gitignore 忽略产物但保留结构，供流水线串接）
+$WB_DIRS = @("inbox", "extract", "desen", "summary", "render", "archive", "logs")
+foreach ($d in $WB_DIRS) {
+  $dir = Join-Path "workbench" $d
+  if (-not (Test-Path $dir)) {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    Write-Host "      + 创建 workbench/$d"
   }
 }
 
 Write-Host ">>> 初始化完成。"
+Write-Host "    运行 .\office-kit.ps1 --help 试用各组件；检查组件完整性/升级：.\office-kit.ps1 check"

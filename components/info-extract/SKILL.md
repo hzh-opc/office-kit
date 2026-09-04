@@ -153,6 +153,6 @@ Agent 交付识别结果时，对话内须按以下卡片结构呈现：
 
 未检出 `desensitization-sop`（DESEN）时**自动降级、不报错**：本地处理正常进行，仅在需要上云脱敏时由智能体层提示「未安装脱敏技能」；同理 browser 技能缺失时在线加密视频自动回退或提示。检测逻辑见 `scripts/skill_bridge.py`（`python scripts/router.py --check` 可见协同能力可用性）。
 
-> **外发两路分流（「仅组件场景安全审计」落地，2026-09-04 按套件政策放宽为提示）**：本组件的 `skill_bridge.py` 提供 `enforce_desen_scan_before_external(paths)`——已装 DESEN 时返回 `prompt`（外发前建议跑 `desen scan`，命中敏感信息仅提示、不阻断）；未装时返回 `remind`（显式提醒 + 本地 `pii_scan` 兜底）。与套件层「显式外发直接放行、隐性外发仅提示不阻断」口径一致。
+> **外发两路分流（「仅组件场景安全审计」落地，2026-09-04 收口版）**：套件层（kit.py 门禁）将 `extract` 登记为**隐性外发**，命中敏感信息**硬阻断**（exit 3，须先 `desen run` 脱敏再重试；逃生口 `OFFICE_KIT_SKIP_EXTERNAL_GATE=1`）。组件侧 `skill_bridge.py` 的 `enforce_desen_scan_before_external(paths)` 作为**独立运行（不经套件）时的兜底**：委托 `request_external_confirmation` 做 confirm-or-block（本地 `pii_scan` 预检 + 用户确认，未确认按安全默认阻断），不静默放行。两条路径口径一致：套件层真正 `desen scan` 硬阻断，组件层 confirm-or-block 兜底。
 
 详细设计、模块契约、Provider 接口见 `references/reference.md`；决策记录见 `CHANGELOG.md`。

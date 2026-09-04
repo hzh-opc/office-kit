@@ -103,17 +103,17 @@ $KIT/office-kit.sh tencent-doc 文章.md --title "标题"          # Markdown→
 
 ## 外发必扫 DESEN 铁律（最高优先级，硬约束）
 
-**凡外发信息必先 `desen scan`，未扫即阻断。** 本铁律适用于一切把信息送出本机的动作，包括显式外发与隐性外发。**2026-09-04 L4 硬化版：隐性外发命中敏感 → `kit.py` 代码级硬阻断（exit≠0），不再仅提示。**
+**凡外发信息必先 `desen scan`，未扫即阻断。** 本铁律适用于一切把信息送出本机的动作，包括显式外发与隐性外发。**2026-09-04 收口版：外发登记唯一真相源 = 各组件 manifest.json 的 `commands[].external` 字段（`external_kind` 区分显式/隐性），`kit.py` 据此动态建门禁，不再维护独立字典。隐性外发命中敏感 → 硬阻断（exit 3）；显式外发命中敏感 → 提示不阻断；stdin/URL 输入同样纳入扫描。**
 
-- **显式外发**（`kit.py` `EXPLICIT_EXTERNAL`，用户主动、明显上云意图，直接放行不打扰）：`tencent-doc`（Markdown→腾讯文档云端）。
-- **隐性外发**（`kit.py` `IMPLICIT_EXTERNAL`，非用户明显意图的上云/联网，命中敏感即硬阻断）：`summarize --mode cloud/hybrid`（摘要上云）、`podcast --tts`、多语翻译（translation）、联网补全（search）、网页抓取、要点沉淀进知识库、识别稿外发等。
+- **显式外发**（`external_kind=explicit`，用户主动、明显上云意图，命中敏感仅提示、放行执行）：`tencent-doc`（Markdown→腾讯文档云端）。
+- **隐性外发**（`external_kind=implicit`，非用户明显意图的上云/联网，命中敏感即硬阻断）：`extract`（识别稿外发）。`summarize` 脚本本身为纯本地（零上云），已不登记为外发——其翻译/TTS/联网补全等隐性外发是 SKILL.md 层智能体动作，由 `podcast.py --tts` 等组件内 confirm-or-block 确认闸口负责，不经 `kit.py` 分发。
 - **逃生口**：环境变量 `OFFICE_KIT_SKIP_EXTERNAL_GATE=1` 显式跳过全部门禁（等价 security-scan Skip 档，风险自负）。
 
 执行规则（分「DESEN 已装 / 未装」两路）：
 
 | 情形 | 行为 |
 |------|------|
-| **DESEN 已装**（或已装任意脱敏技能/工具） | 隐性外发命令执行前**强制前置 `desen scan`**（`kit.py` 代码级门禁，自动仅扫真实输入文件）：命中敏感 → **硬阻断**（exit 3，须先 `desen run` 出脱敏副本再重试）；无敏感 → 静默放行；扫描异常 → fail-safe 保守阻断。各组件单独调用（S4）时由 `skill_bridge.py` 强制「已装即必扫」 |
+| **DESEN 已装**（或已装任意脱敏技能/工具） | 外发命令执行前**强制前置 `desen scan`**（`kit.py` 代码级门禁，扫真实输入文件 + stdin + URL）：隐性外发命中敏感 → **硬阻断**（exit 3，须先 `desen run` 出脱敏副本再重试）；显式外发命中敏感 → **提示**（不阻断）；无敏感 → 静默放行；扫描异常 → fail-safe 保守阻断。各组件单独调用（S4）时由 `skill_bridge.py` 的 confirm-or-block 确认闸口兜底 |
 | **DESEN 未装**（用户未装/不愿装） | **不随意阻断任务**（无工具可强制，阻断会卡死任务），改为**显式提醒**（"未检测到脱敏技能，本次外发未经完整 desen 扫描，请自行确认是否含敏感信息"）+ **组件自带最小脱敏兜底**（本地 PII 预检/掩码），让用户在知情前提下继续 |
 
 > 组件升级/修复（`upgrade`/`repair`）属「组件自更新」联网，非外发用户信息，不触发本铁律。`desen` 自身「脱敏副本上云」已有确认闸门 + 清单，是铁律的正确实现范本。表格云解析（sheetagent）等 **office-kit 之外的插件通道不经过本铁律门禁**，须在业务层约定「送云前先 `desen scan`」兜底。

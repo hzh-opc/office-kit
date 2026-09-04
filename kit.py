@@ -204,6 +204,8 @@ def _discover_components():
                 "description": cmd.get("description", ""),
                 "category": cmd.get("category", "未分类"),
                 "name": cmd_name,
+                "external": cmd.get("external", False),
+                "external_kind": cmd.get("external_kind", "explicit"),
             }
             commands[cmd_name] = rec
             for alias in cmd.get("aliases", []) or []:
@@ -657,22 +659,22 @@ def cmd_repair(components, args):
 # ---------------------------------------------------------------------------
 
 # 外发命令：把信息送出本机的命令（含隐性外发）。键=命令名，值=说明。
-# 新增外发能力时须在此登记（套件 SKILL.md 外发边界清单同步维护）。
-# 显式外发：用户主动发起、明显上云/分享意图（如 tencent-doc 上传腾讯文档云端）。
-# 按 2026-09-04 套件政策细化：不主动脱敏，信息安全由用户与平台负责，门禁直接放行、不打扰。
-EXPLICIT_EXTERNAL = {
+# 2026-09-04 起：外发登记的唯一真相源是各组件 manifest.json 的 commands[].external 字段，
+# 本处字典仅作「命令名 → 语义说明」的文案补充（供阻断/提示措辞使用），不再独立维护
+# 命令清单——新增外发能力只改 manifest，无需同步此字典，消除双源漂移。
+#
+# 外发语义（external_kind 区分两类，登记在 manifest 的 external_kind 字段）：
+#  - explicit（显式外发，默认）：用户主动发起、明显上云/分享意图（如 tencent-doc 上传腾讯文档云端）。
+#    不主动脱敏，信息安全由用户与平台负责；但为防误发敏感信息，放行前做一次 desen scan，
+#    命中敏感则**提示**（不阻断），供用户确认。
+#  - implicit（隐性外发）：命令本身可能触发非用户明显意图的上云/联网（如 extract 识别稿外发、
+#    summarize 的翻译/TTS/联网补全）。命中敏感信息 → 硬阻断（allow=False），须先 desen run 再重试。
+#    逃生口 OFFICE_KIT_SKIP_EXTERNAL_GATE=1 显式跳过。
+EXTERNAL_DESC = {
     "tencent-doc": "Markdown→腾讯文档云端（docs.qq.com）",
+    "extract": "内容识别稿产出（可能含敏感信息，后续外发/分享须脱敏）",
+    "summarize": "摘要提炼（输入可能含敏感信息，翻译/TTS/联网补全等后续外发须脱敏）",
 }
-# 隐性外发：命令本身可能触发非用户明显意图的上云/联网（如 summarize 的翻译/TTS/联网补全）。
-# 2026-09-04 L4 硬化版：命中敏感信息 → 硬阻断（allow=False），须先 desen run 再重试；
-# 逃生口 OFFICE_KIT_SKIP_EXTERNAL_GATE=1 显式跳过。新增隐性外发能力时须在此登记，
-# 并在套件 SKILL.md 外发边界清单同步维护。
-IMPLICIT_EXTERNAL = {
-    "summarize": "摘要上云/翻译/TTS/联网补全/知识库沉淀等隐性外发",
-}
-
-# 触发 summarize 外发的参数片段（用于精确提示，实际拦截以命令级为准）。
-_SUMMARIZE_EXTERNAL_HINTS = ("--mode cloud", "--mode hybrid", "cloud", "hybrid", "translation", "--tts", "search")
 
 
 def _desen_component() -> "dict | None":
@@ -712,22 +714,28 @@ def _run_desen_scan(paths):
 
 
 def _external_scan_targets(rest):
-    """从外发命令参数中提取应扫描的输入文件/目录。
+    """从外发命令参数中提取应扫描的输入文件/目录，并捕获 stdin（`-`）与 URL 输入。
 
-    仅把「真实存在的输入」纳入扫描；排除选项及其值（如 `--chars 50` 的 `50`、
-    `--title X` 的 `X`、`--format json`、`--out <路径>` 等），避免把它们误当扫描
-    目标传给 `desen scan` 导致参数非法并触发 fail-safe 误阻断。
+    返回 (targets: list[str], stdin_text: str|None)。targets 为真实存在的文件/目录；
+    stdin_text 为 `-` 从标准输入读到的原始文本（若存在）；URL 字符串单独返回给调用方
+    落临时文件后扫描（避免漏检「非文件输入」——此前 stdin/URL 输入因 `os.path.exists`
+    为假被整体放行，是真实盲区）。
 
     处理规则：
-    - 以 `-` 开头的 token：选项本身；附着形式 `--out=...` 整体排除；空格形式
+    - `-` token：标记读 stdin（多文档时 summarize 允许每个位置独立 `-`）。
+    - 以 `-` 开头的其它 token：选项本身；附着形式 `--out=...` 整体排除；空格形式
       `--out <val>` 标记「跳过下一 token」（输出路径即使存在也不扫）。
+    - URL 字符串（http:// 或 https:// 开头）：作为待抓取内容，落临时文件后扫描。
     - 其余 token：仅当 `os.path.exists` 为真（输入文件或目录）才纳入扫描。
     """
     out_flags = {"--out", "-o"}
-    targets, skip_next = [], False
+    targets, urls, skip_next, use_stdin = [], [], False, False
     for tok in rest:
         if skip_next:
             skip_next = False
+            continue
+        if tok == "-":
+            use_stdin = True
             continue
         if tok.startswith("-"):
             head = tok.split("=", 1)[0]
@@ -736,54 +744,128 @@ def _external_scan_targets(rest):
                     continue            # 附着形式 --out=... 已含值，整体排除
                 skip_next = True        # 空格形式 --out <val> 跳过下一 token
             continue
+        if tok.startswith(("http://", "https://")):
+            urls.append(tok)
+            continue
         if os.path.exists(tok):
             targets.append(tok)
-    return targets
+    return targets, urls, use_stdin
 
 
-def _external_gate(target, rest):
-    """外发命令门禁（套件反馈 P0-② 细化版；2026-09-04 L4 硬化版——隐性外发改硬阻断）。
+def _scan_text_content(text, tag):
+    """把非文件内容（stdin 文本 / URL 抓取文本）落临时文件后跑 desen scan，返回 (passed, output)。
 
-    政策要点：
-    - 显式外发（EXPLICIT_EXTERNAL，如 tencent-doc 上传腾讯文档云端）：用户主动发起、
-      明显上云/分享意图。不主动脱敏，信息安全由用户与平台负责，门禁直接放行、不打扰。
-    - 隐性外发（IMPLICIT_EXTERNAL，如 summarize 的翻译/TTS/联网补全）：非用户明显意图
-      的上云/联网。**DESEN 已装且命中敏感信息 → 硬阻断（allow=False）**，须先 `desen run`
-      出脱敏副本再重试；DESEN 未装 → 按 SOUL.md 既定原则显式提醒、不阻断（无工具可强制，
-      阻断只会卡死任务）；扫描异常按 fail-safe 保守阻断，避免敏感信息无闸外发。
+    tag 用于错误/提示措辞标识内容来源。desen scan 不接受 stdin，故落临时文件。
+    """
+    if not text or not text.strip():
+        return True, ""  # 空内容无风险
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".txt", prefix="office_kit_scan_", delete=False) as tf:
+            tf.write(text)
+            tmp_path = tf.name
+    except Exception as exc:  # noqa: BLE001
+        return False, "无法落临时文件以扫描 %s：%s" % (tag, exc)
+    try:
+        passed, out = _run_desen_scan([tmp_path])
+        return passed, out
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _read_stdin():
+    """读取标准输入全文（非阻塞：无 stdin 内容时返回 None）。"""
+    try:
+        if sys.stdin.isatty():
+            return None
+        data = sys.stdin.read()
+        return data if data and data.strip() else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _external_gate(target, rest, rec=None):
+    """外发命令门禁（2026-09-04 收口版：外发登记单一真相源=manifest，支持 stdin/URL 扫描）。
+
+    政策要点（external_kind 区分两类）：
+    - 显式外发（external_kind=explicit，如 tencent-doc 上传腾讯文档云端）：用户主动发起、
+      明显上云/分享意图。不主动脱敏；但放行前做一次 desen scan，命中敏感则**提示**（不阻断），
+      供用户确认，避免误发敏感信息。
+    - 隐性外发（external_kind=implicit，如 extract 识别稿外发、summarize 输入含敏感信息）：
+      非用户明显意图的上云/联网。**DESEN 已装且命中敏感信息 → 硬阻断（allow=False）**，
+      须先 `desen run` 出脱敏副本再重试；DESEN 未装 → 按 SOUL.md 既定原则显式提醒、不阻断
+      （无工具可强制，阻断只会卡死任务）；扫描异常按 fail-safe 保守阻断。
     - 逃生口：环境变量 `OFFICE_KIT_SKIP_EXTERNAL_GATE=1` 显式跳过全部门禁（与
-      security-scan 的 Skip 档一致）；显式外发不受影响。
+      security-scan 的 Skip 档一致）。
+
+    扫描输入来源：真实文件/目录 + stdin（`-`）+ URL（http/https）。此前 stdin/URL 因
+    `os.path.exists` 为假被整体放行，是真实盲区，现已纳入扫描。
 
     返回值 (allow, note)：allow=False 时由调用方阻断（exit 非零）；note 为提示/说明，
     空串表示不打扰。
     """
-    # 显式外发：用户主动发起、明显上云意图，不主动脱敏，直接放行、不打扰。
-    if target in EXPLICIT_EXTERNAL:
-        return True, ""
-    # 以下为隐性外发（L4 硬化版）。
+    desc = EXTERNAL_DESC.get(target, rec.get("description", "") if rec else "")
+    is_explicit = (rec or {}).get("external_kind", "explicit") == "explicit"
     # 逃生口：用户显式 OFFICE_KIT_SKIP_EXTERNAL_GATE=1 时跳过（与 security-scan Skip 档一致）。
     if os.environ.get("OFFICE_KIT_SKIP_EXTERNAL_GATE") == "1":
         return True, "（已显式跳过外发门禁 OFFICE_KIT_SKIP_EXTERNAL_GATE=1，未执行 desen 扫描）"
     desen = _desen_component()
     if desen is None:
-        # 未装 DESEN：按 SOUL.md「未装不随意阻断、改为显式提醒+最小脱敏兜底」原则，
+        if is_explicit:
+            # 显式外发 + 未装 DESEN：零打扰放行（用户主动上云，无工具可强制扫描）。
+            return True, ""
+        # 隐性外发 + 未装 DESEN：按 SOUL.md「未装不随意阻断、改为显式提醒」原则，
         # 不阻断，仅显式提醒（阻断会卡死任务且无工具可强制）。
         return True, (
-            "⚠ 隐性外发提示：「%s」可能触发上云/联网（如翻译/TTS/联网补全）。\n"
+            "⚠ 隐性外发提示：「%s」可能触发上云/联网（%s）。\n"
             "  未检测到脱敏组件（desensitization-sop 未安装），本次外发未经完整 desen 扫描，\n"
             "  请自行确认待发内容不含敏感信息。\n"
-            "  → 建议先 `kit.py repair desensitization-sop` 装齐后走硬阻断闸门。" % target
+            "  → 建议先 `kit.py repair desensitization-sop` 装齐后走硬阻断闸门。" % (target, desc or "如翻译/TTS/联网补全")
         )
-    # 已装 DESEN：前置 scan；命中敏感 → 硬阻断；干净 → 放行（_external_scan_targets 仅扫真实输入）。
-    paths = _external_scan_targets(rest)
-    if not paths:
-        # 无本地输入文件可扫：不空转阻断（无内容即无泄密风险对象），放行。
+    # 已装 DESEN：前置 scan（真实文件 + stdin + URL 三源）。
+    paths, urls, use_stdin = _external_scan_targets(rest)
+    passed, out = True, ""
+    scan_ran = False
+    if paths:
+        scan_ran = True
+        passed, out = _run_desen_scan(paths)
+    if passed and use_stdin:
+        stdin_text = _read_stdin()
+        if stdin_text is not None:
+            scan_ran = True
+            passed, out = _scan_text_content(stdin_text, "stdin 输入")
+    if passed and urls:
+        for u in urls:
+            try:
+                fetched = _http_fetch(u).decode("utf-8", errors="replace")
+            except Exception as exc:  # noqa: BLE001
+                # URL 抓取失败：内容无法确认，按 fail-safe 保守阻断（隐性）/提示（显式）。
+                if is_explicit:
+                    continue
+                passed, out = False, "URL 抓取失败，无法扫描：%s（%s）" % (u, exc)
+                break
+            scan_ran = True
+            p, o = _scan_text_content(fetched, "URL 内容 %s" % u)
+            if not p:
+                passed, out = p, o
+                break
+    if not scan_ran:
+        # 无可扫描输入（既无文件、无 stdin、无 URL）：无内容即无泄密风险对象，放行。
         return True, ""
-    passed, out = _run_desen_scan(paths)
     if passed:
         return True, ""  # 扫描通过、无敏感：静默放行，不打扰
+    if is_explicit:
+        # 显式外发命中敏感：不阻断（用户主动上云），但明确提示，供用户确认。
+        return True, (
+            "⚠ 显式外发提示：「%s」待发内容命中敏感信息，请确认后再外发（本次已放行执行）。\n"
+            "  → 建议先 `desen run <文档> --out workbench/desen/` 生成脱敏副本再外发。\n"
+            "  扫描详情：\n%s" % (target, out or "（无输出）")
+        )
     return False, (
-        "✗ 隐性外发阻断：「%s」待发内容命中敏感信息，已按 L4 门禁中止执行（未发送）。\n"
+        "✗ 隐性外发阻断：「%s」待发内容命中敏感信息，已按门禁中止执行（未发送）。\n"
         "  → 请先 `desen run <文档> --out workbench/desen/` 生成脱敏副本，用脱敏副本重试；\n"
         "    或确认内容可外发后设 OFFICE_KIT_SKIP_EXTERNAL_GATE=1 放行（风险自负）。\n"
         "  扫描详情：\n%s" % (target, out or "（无输出）")
@@ -835,10 +917,11 @@ def cmd_run(commands, argv):
             return 3
     else:
         py = venv_py
-    # 外发命令门禁（套件反馈 P0-② 细化版 + 2026-09-04 L4 硬化版）：显式外发直接放行；
-    # 隐性外发命中敏感信息 allow=False → 硬阻断（exit 3）；逃生口 OFFICE_KIT_SKIP_EXTERNAL_GATE=1。
-    if target in EXPLICIT_EXTERNAL or target in IMPLICIT_EXTERNAL:
-        allow, note = _external_gate(target, rest)
+    # 外发命令门禁（2026-09-04 收口版）：外发登记唯一真相源 = manifest 的 commands[].external 字段；
+    # 隐性外发命中敏感信息 allow=False → 硬阻断（exit 3）；显式外发命中敏感仅提示不阻断；
+    # 逃生口 OFFICE_KIT_SKIP_EXTERNAL_GATE=1。
+    if rec.get("external"):
+        allow, note = _external_gate(target, rest, rec)
         if note:
             print(note)
         if not allow:

@@ -22,6 +22,8 @@
       "aliases": ["info-extract"],
       "entry": "scripts/router.py",
       "fallback": "none",
+      "external": true,
+      "external_kind": "implicit",
       "category": "抽取处理链",
       "description": "转录/OCR/视频/画面解读/文档文本提取/直播录制/设备摄取；--type 取值：ocr/vision/transcript/doc_extract/video/video_online/video_online_enum/live/capture；直播：--live [--live-transcribe 边录边转] [--live-timeout N] [--live-stop-on-end] [--keep-live]；设备：--device <设备> [--duration N]"
     }

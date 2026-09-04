@@ -25,6 +25,10 @@ office-kit/
 │   ├── archive/              #   归档
 │   └── logs/                 #   运行日志
 ├── config/                   # 本地配置（.env.example 为样例，.env 不入库）
+├── hooks/                    # 安全钩子（desen-stop：Stop 时扫描外发动作的兜底检测）
+│   └── desen-stop/
+├── skills/                   # 触发壳资产（随仓库分发，可选部署到 ~/.workbuddy/skills/）
+│   └── desen-trigger/        #   跨场景 DESEN 触发壳（非办公场景的敏感/外发闸门入口）
 ├── office-kit.sh             # 统一入口（macOS / Linux）
 ├── office-kit.ps1            # 统一入口（Windows）
 ├── kit.py                    # 动态注册与分发器（扫描 manifest.json，生成"功能记录"）
@@ -129,6 +133,20 @@ python kit.py feedback --component info-extract \
 
 `summarize` 会自动发现同包内的 `desensitization-sop`（扫描 `components/` 目录），
 实现「脱敏 → 处理 → 回填 → 复核」链路。合并包内已内置该发现逻辑，无需 WorkBuddy。
+
+## DESEN 跨场景触发壳（skills/desen-trigger）
+
+套件内的外发门禁（`kit.py` 按 `manifest` 的 `commands[].external` 建门禁）覆盖「办公抽取」链路；
+但「非办公场景」的敏感动作（表格云解析 sheetagent、发邮件、联网搜索、纯对话中的 PII、财务/审计底稿等）
+不在办公元技能 description 触发词内，Agent 可能不联想 desen → 静默失效。
+
+`skills/desen-trigger/` 是为此准备的**触发转发壳**（纯 SKILL.md，无组件本体，不复制 desen、不双轨）：
+把「脱敏 / 上云 / 财务敏感」从办公抽取词里拆出单列，让 desen 可被任意场景独立命中，命中后转发到
+`components/desensitization-sop` 权威实现。
+
+- **可选部署**：把 `skills/desen-trigger/` 整目录 copy 到用户级技能目录 `~/.workbuddy/skills/`
+  （实目录 copy，非 symlink）。不部署不影响套件内门禁；部署后可让非办公场景的敏感动作也能被准确触发。
+- **权威实现唯一**：始终走 `components/desensitization-sop/`（勿调用旧独立副本）。
 
 ## 组件升级 / 修复（在线）
 

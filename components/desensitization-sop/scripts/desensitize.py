@@ -1994,6 +1994,37 @@ def _warn_state_secret(total):
         print("=" * 72, file=sys.stderr)
 
 
+_HIGH_RISK_KINDS = {"id_card", "phone", "bank_card", "passport", "jwt", "secret",
+                    "iban", "swift", "intl_phone", "cn_name", "cn_address", "cn_org",
+                    "state_secret"}
+_MED_RISK_KINDS = {"email", "plate", "ip", "vat", "internal_mark"}
+
+
+def _assess_risk(total):
+    """基于命中类型自动初判风险级（P2 增强：辅助人工分级，非替代人审）。
+
+    仅作「分级初判提示」，供 Agent/用户快速感知文档风险档位、辅助对照 12 项清单；
+    不替代 reference.md §2 的正式分级（后者还看准标识符组合、业务语义）。
+    输出到 stderr，避免干扰 kit.py 门禁对 stdout 的判定（不产生"汇总/未发现"字样）。
+    """
+    if not total:
+        return None
+    high = sum(total.get(k) or 0 for k in _HIGH_RISK_KINDS)
+    med = sum(total.get(k) or 0 for k in _MED_RISK_KINDS)
+    # 其余未单列的命中类型（如自定义/兜底）也计入中档
+    known = {k for k in _HIGH_RISK_KINDS} | {k for k in _MED_RISK_KINDS}
+    other = sum(v for k, v in total.items() if k not in known)
+    if high:
+        level, note = "高", "含直接标识符/敏感个人信息级命中，须本地去标识化后方可上云（对照清单 1-5 项）"
+    elif med or other:
+        level, note = "中", "含一般敏感/标识类命中，脱敏（去标识化）后可上云（对照清单 1-5 项）"
+    else:
+        return None
+    print("\n[分级初判] 按命中类型自动判定风险档：%s——%s（自动初判仅供辅助，最终以人审核对清单为准）"
+          % (level, note), file=sys.stderr)
+    return level
+
+
 def cmd_scan(args):
     names = load_names(args.names)
     patterns = build_patterns(args.cn_enhance)
@@ -2021,6 +2052,7 @@ def cmd_scan(args):
     else:
         print("未发现已知敏感标识符。")
     _warn_state_secret(total)
+    _assess_risk(total)
     if cleaning:
         print("\n⚠ 清洗建议（疑似未清洗数据形态，未自动脱敏）：%s" % json.dumps(cleaning, ensure_ascii=False))
         print(CLEANING_ADVICE_TEXT)
@@ -2168,6 +2200,7 @@ def cmd_run(args):
         print("  密钥         : 由 --passphrase 派生（salt 已存于 keys 目录）")
     print("  命中统计     : %s" % json.dumps(total, ensure_ascii=False))
     _warn_state_secret(total)
+    _assess_risk(total)
     print("  恢复安全性   : %s" % safety +
           ("（存在 %d 处多对一碰撞，恢复可能混淆）" % len(collisions)
            if safety == "ambiguous" else ""))

@@ -200,6 +200,7 @@ def _discover_components():
             rec = {
                 "component": name,
                 "entry": cmd.get("entry", ""),
+                "fallback": cmd.get("fallback", "none"),
                 "description": cmd.get("description", ""),
                 "category": cmd.get("category", "未分类"),
                 "name": cmd_name,
@@ -744,19 +745,42 @@ def cmd_run(commands, argv):
         rest = [a for a in rest if a != "--dry-run"]
     rec = commands.get(target)
     if not rec:
-        sys.stderr.write("✗ 未知命令：%s\n已知命令：%s\n" % (target, ", ".join(sorted(set(r['name'] for r in commands.values()))) or "（无）"))
+        # 命令未注册：多为「命令所属组件未安装」。给清晰提醒 + 修复指引，不假装成功。
+        known = sorted(set(r['name'] for r in commands.values()))
+        sys.stderr.write(
+            "✗ 未知命令：%s\n"
+            "  可能原因：对应组件未安装 / 未同步。\n"
+            "  已注册命令：%s\n"
+            "  → 请用 `kit.py list` 查看已注册命令，`kit.py repair <组件名>` 在线修复/安装缺失组件。\n"
+            % (target, ", ".join(known) or "（无）")
+        )
         return 2
     venv_py = _venv_python()
     entry = KIT_DIR / "components" / rec["component"] / rec["entry"]
     if not entry.is_file():
-        sys.stderr.write("✗ 入口不存在：%s\n" % entry)
+        sys.stderr.write(
+            "✗ 入口不存在：%s\n"
+            "  → 组件「%s」已损坏或未完整同步，请运行 `kit.py repair %s` 在线修复。\n"
+            % (entry, rec["component"], rec["component"])
+        )
         return 2
     if dry:
         print("[dry-run] %s %s %s" % (venv_py, entry, " ".join(rest)))
         return 0
+    # venv 缺失时的降级：fallback=minimal-stdlib 的命令（纯标准库、无第三方依赖）
+    # 可用系统 Python 直接运行，不阻断任务；其余（none）依赖 venv，保持硬提示。
     if not venv_py.is_file():
-        sys.stderr.write("✗ 虚拟环境缺失：%s\n→ 请先运行 ./bootstrap.sh 初始化。\n" % venv_py)
-        return 3
+        if rec.get("fallback") == "minimal-stdlib":
+            sys.stderr.write(
+                "⚠ 虚拟环境缺失（%s），命令「%s」为纯标准库实现，已降级到系统 Python 执行。\n"
+                "  如需完整能力请运行 ./bootstrap.sh 初始化。\n" % (venv_py, target)
+            )
+            py = sys.executable
+        else:
+            sys.stderr.write("✗ 虚拟环境缺失：%s\n→ 请先运行 ./bootstrap.sh 初始化。\n" % venv_py)
+            return 3
+    else:
+        py = venv_py
     # 外发命令门禁（套件反馈 P0-②）：外发命令执行前强制前置 desen scan。
     if target in EXTERNAL_COMMANDS:
         allow, note = _external_gate(target, rest)
@@ -767,11 +791,13 @@ def cmd_run(commands, argv):
     # 显式向组件进程注入 venv 真相源，避免组件自行 re-exec 到错误路径。
     #   UV_PROJECT_ENVIRONMENT → kit 根 .venv（doc-layout / info-extract 优先读取）
     #   OFFICE_KIT_ROOT         → kit 根目录（doc-layout 兜底优先复用 kit/.venv）
+    # 降级到系统 Python（fallback=minimal-stdlib）时不注入 venv 真相源（不存在）。
     env = dict(os.environ)
-    env["UV_PROJECT_ENVIRONMENT"] = str(venv_py.parent)
     env["OFFICE_KIT_ROOT"] = str(KIT_DIR)
+    if py == venv_py:
+        env["UV_PROJECT_ENVIRONMENT"] = str(venv_py.parent)
     try:
-        proc = subprocess.run([str(venv_py), str(entry)] + rest, env=env)
+        proc = subprocess.run([str(py), str(entry)] + rest, env=env)
         return proc.returncode
     except Exception as exc:  # noqa: BLE001
         sys.stderr.write("✗ 调用失败：%s\n" % exc)

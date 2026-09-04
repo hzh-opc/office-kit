@@ -528,10 +528,15 @@ def mask_value(kind: str, value: str) -> str:
         return "[地址]"
     if kind == "cn_org":
         return "[机构]"
-    if kind == "classification":
-        # 密级标签：抹去具体等级（机密/绝密/秘密）与内部性（内部资料等），保留"密级"语义，
-        # 避免正文把"【机密】重大重组"泄露为具体密级。整体替换为通用密级占位。
-        return "[密级]"
+    if kind == "state_secret":
+        # 法定国家秘密等级标记（机密/绝密/秘密）。脱敏时抹去具体等级与包裹，替换为
+        # 通用占位（不泄露具体密级）；但须配合 cmd_scan/cmd_run 的显式确认提醒——
+        # 一般企业/单位依法接触不到国家秘密，命中此类标记应提醒用户人工确认来源，
+        # 而非当作普通可上云字段静默放行。掩码只是抹字眼，不豁免保密责任。
+        return "[涉密标记]"
+    if kind == "internal_mark":
+        # 企业内部标签（内部资料/内部文件/内参）：非国家秘密，抹去内部字眼保留语义占位。
+        return "[内部]"
     # 兜底：含生僻字/特殊字符 → 全掩码；否则首尾各留 1，中间掩码
     if _has_rare_or_special(value):
         return "*" * len(value)
@@ -607,7 +612,7 @@ def desensitize_text(text: str, mode: str, token_map: dict, counts: dict,
     # 3.2 顺序应用正则（先处理 ID/手机，避免银行卡重复命中；跨境标识在数字类之后，互不冲突）
     for kind in ["id_card", "phone", "bank_card", "ip", "email", "jwt",
                  "plate", "passport", "iban", "swift", "vat", "intl_phone",
-                 "classification"]:
+                 "state_secret", "internal_mark"]:
         pat = patterns[kind]
         cb = _repl_closure(kind, mode, token_map, counts, hits)
         result = pat.sub(lambda m, _cb=cb: _cb(m), result)
@@ -1969,6 +1974,26 @@ def _resolve_stdin(input_path):
     return tmp, True
 
 
+def _warn_state_secret(total):
+    """若命中法定国家秘密等级标记（state_secret），输出显式确认提醒。
+
+    政策（2026-09-04 用户指示）：一般企业/单位依法接触不到「机密/绝密/秘密」国家秘密
+    载体。若文档出现此类标记，多为「内部文件误用机密字眼」或来源异常。此时不可当作普通
+    可上云字段静默放行——须显式提醒用户确认来源合法性与载体性质，再由用户决定处理。
+    （脱敏掩码只是抹去字眼，不改变内容的保密属性，更不豁免保密法责任。）
+    """
+    n = total.get("state_secret") or 0
+    if n:
+        print("\n" + "=" * 72, file=sys.stderr)
+        print("⚠ 命中 %d 处法定国家秘密等级标记（机密/绝密/秘密）。" % n, file=sys.stderr)
+        print("  按政策：一般企业/单位依法接触不到国家秘密载体。", file=sys.stderr)
+        print("  若为【内部文件】误用了机密/绝密/秘密字眼，或来源异常，请先与用户显式确认：", file=sys.stderr)
+        print("  ① 内容是否确属国家秘密载体？（是→严禁上云/联网处理，须按保密管理规定线下处置）", file=sys.stderr)
+        print("  ② 是否仅是内部文件的误标？（是→确认后按内部资料处理，勿标为可上云脱敏件）", file=sys.stderr)
+        print("  掩码已去除具体等级字眼，但不改变保密属性、不豁免保密责任，请勿直接据此放行上云。", file=sys.stderr)
+        print("=" * 72, file=sys.stderr)
+
+
 def cmd_scan(args):
     names = load_names(args.names)
     patterns = build_patterns(args.cn_enhance)
@@ -1995,6 +2020,7 @@ def cmd_scan(args):
         print("\n汇总：", json.dumps(total, ensure_ascii=False))
     else:
         print("未发现已知敏感标识符。")
+    _warn_state_secret(total)
     if cleaning:
         print("\n⚠ 清洗建议（疑似未清洗数据形态，未自动脱敏）：%s" % json.dumps(cleaning, ensure_ascii=False))
         print(CLEANING_ADVICE_TEXT)
@@ -2141,6 +2167,7 @@ def cmd_run(args):
     else:
         print("  密钥         : 由 --passphrase 派生（salt 已存于 keys 目录）")
     print("  命中统计     : %s" % json.dumps(total, ensure_ascii=False))
+    _warn_state_secret(total)
     print("  恢复安全性   : %s" % safety +
           ("（存在 %d 处多对一碰撞，恢复可能混淆）" % len(collisions)
            if safety == "ambiguous" else ""))

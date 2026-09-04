@@ -81,6 +81,7 @@ import re
 import secrets
 import shutil
 import sys
+import tempfile
 from datetime import datetime
 
 from cryptography.fernet import Fernet
@@ -1943,10 +1944,31 @@ def cmd_preprocess(args):
         print("  下一步：校对 OCR 后执行 run（带 --workspace %s）" % ws, file=sys.stderr)
 
 
+def _resolve_stdin(input_path):
+    """把 stdin（`-`）或空 input 落成临时文本文件，返回 (路径, 是否临时)。
+
+    用于让 `scan`/`run` 支持「纯文本直接经管道传入」的非文件输入场景（如联网搜索、
+    发邮件、纯对话中 Agent 拿到的文本片段），复用 process_file 全路径检测，避免
+    iter_targets 把 `-` 当目录遍历而崩溃。临时文件无扩展名则按 .txt 处理。
+    注意：须在 os.path.abspath 之前调用，因为 abspath 会把 `-` 转成路径而丢失其语义。
+    """
+    if input_path not in ("-", ""):
+        return input_path, False
+    data = sys.stdin.read()
+    if not data.strip():
+        print("  [错误] stdin 输入为空，未提供任何内容可扫描。", file=sys.stderr)
+        sys.exit(2)
+    fd, tmp = tempfile.mkstemp(suffix=".txt", prefix="desen_stdin_")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(data)
+    return tmp, True
+
+
 def cmd_scan(args):
     names = load_names(args.names)
     patterns = build_patterns(args.cn_enhance)
-    input_path = os.path.abspath(args.input)
+    input_path, _is_tmp = _resolve_stdin(args.input)
+    input_path = os.path.abspath(input_path)
     src_root = input_path if os.path.isdir(input_path) else os.path.dirname(input_path)
     public_manifests = discover_public_manifests(input_path, getattr(args, "public_manifest", None))
     total = {}
@@ -1978,7 +2000,8 @@ def cmd_run(args):
     names = load_names(args.names)
     custom_map = load_custom_mapping(args.mapping)
     patterns = build_patterns(args.cn_enhance)
-    input_path = os.path.abspath(args.input)
+    input_path, _is_tmp = _resolve_stdin(args.input)
+    input_path = os.path.abspath(input_path)
     src_root = input_path if os.path.isdir(input_path) else os.path.dirname(input_path)
     ws = _ws_root(args)
     if ws:
@@ -2512,7 +2535,7 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("scan", help="扫描并报告敏感字段命中（不生成文件）")
-    sp.add_argument("input", help="文件或目录")
+    sp.add_argument("input", help="文件或目录；传 `-` 从标准输入读取纯文本内容（联网搜索/发邮件等非文件场景）")
     g = sp.add_argument_group("核心参数")
     g.add_argument("--recursive", action="store_true", help="递归处理目录")
     g = sp.add_argument_group("识别增强")
@@ -2539,7 +2562,7 @@ def build_parser():
     sp.set_defaults(func=cmd_scan)
 
     rp = sub.add_parser("run", help="脱敏并生成加密映射表（核心命令，默认 hybrid 模式）")
-    rp.add_argument("input", help="文件或目录")
+    rp.add_argument("input", help="文件或目录；传 `-` 从标准输入读取纯文本内容（联网搜索/发邮件等非文件场景）")
     g = rp.add_argument_group("核心参数")
     g.add_argument("--out", default="./desensitized", help="脱敏副本输出目录（默认 ./desensitized，可上云）")
     g.add_argument("--keys", default="./.desensitize_keys", help="加密映射表目录（默认 ./.desensitize_keys，绝不外发）")

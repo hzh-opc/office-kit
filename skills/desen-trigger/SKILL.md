@@ -23,6 +23,12 @@ desensitization-sop（desen）并入 office-kit 后失去独立顶层入口，�
 ## 标准动作（参考 desensitization-sop 闸门决策表）
 - **步骤零（输入检测闸门，本地离线）**：
   `office-kit.sh desen scan <文件/目录> --recursive`
+  （非文件输入——联网搜索/发邮件/纯对话的文本片段——用 `desen scan -` 从标准输入读取，或先落临时 `.txt` 再 scan。）
+- **命中判定铁律（勿凭退出码）**：`desen scan` **命中敏感后退出码仍为 0**，且干净时也返回 0。
+  判定必须**解析 stdout**，两者不可混淆：
+  - stdout 含 `汇总：`（如 `汇总： {"phone": 1, "id_card": 1}`）→ **已命中敏感**，须先脱敏；
+  - stdout 含 `未发现已知敏感标识符。` → 干净通过；
+  - 两者皆无（含 Traceback）→ 扫描异常，按 **fail-safe 保守阻断**，不得放行。
 - 命中敏感 → 先本地脱敏：
   `office-kit.sh desen run <文件/目录> --workspace <工作区>`
   用 `03_脱敏副本/` 继续任务，映射表留本地 `04_映射表_保密/`，**绝不随副本上传**。

@@ -1,0 +1,17 @@
+{
+  "description": "desen-stop Stop Hook：会话结束前检测「上云/外发已做却无 desen 脱敏留痕」，兜底覆盖 sheetagent 等不经 office-kit L4 门禁的插件通道（L3，2026-09-04）。warn 模式（默认）仅提示不阻断；DESEN_STOP_HOOK_MODE=block 时命中即阻止停止。",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CODEBUDDY_PLUGIN_ROOT}/scripts/desen_stop_hook.py\"",
+            "description": "检测上云/外发无 desen 脱敏留痕（warn 默认；block 需设 DESEN_STOP_HOOK_MODE=block）",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

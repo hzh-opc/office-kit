@@ -1,0 +1,19 @@
+{
+  "name": "desen-stop",
+  "version": "1.0.0",
+  "description": "Stop Hook 插件：会话结束前检测「上云/外发已做却无 desen 脱敏留痕」，兜底覆盖 sheetagent 等不经 office-kit L4 门禁的插件通道。纯标准库、离线、只读 transcript、默认 warn 非阻断。",
+  "author": {
+    "name": "hzh.opc"
+  },
+  "keywords": [
+    "desen",
+    "desensitization",
+    "hook",
+    "security",
+    "data-leak",
+    "脱敏",
+    "stop-hook"
+  ],
+  "category": "security",
+  "hooks": "hooks/hooks.json"
+}

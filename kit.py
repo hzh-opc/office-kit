@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -647,6 +648,93 @@ def cmd_repair(components, args):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# 外发必扫 DESEN 铁律（套件反馈 P0-②）：分发层唯一外发门禁。
+# 「凡外发必先 desen scan，未扫即阻断」——DESEN 已装时强制前置扫描；未装时
+# 显式提醒 + 组件最小脱敏兜底，不随意阻断任务。详见套件 SKILL.md「外发必扫
+# DESEN 铁律」节与 归档/feedback/office-kit（套件）反馈·外发铁律审计.md。
+# ---------------------------------------------------------------------------
+
+# 外发命令：把信息送出本机的命令（含隐性外发）。键=命令名，值=说明。
+# 新增外发能力时须在此登记（套件 SKILL.md 外发边界清单同步维护）。
+EXTERNAL_COMMANDS = {
+    "tencent-doc": "Markdown→腾讯文档云端（docs.qq.com）",
+    # summarize 的上云/翻译/TTS/联网补全由组件脚本自身在 --mode cloud/hybrid、
+    # translation、podcast --tts、search 等子动作触发外发，套件层在此按命令级
+    # 统一拦 summarize（其外发子动作由组件 skill_bridge 已装即必扫兜底）。
+    "summarize": "摘要上云/翻译/TTS/联网补全/知识库沉淀等隐性外发",
+}
+
+# 触发 summarize 外发的参数片段（用于精确提示，实际拦截以命令级为准）。
+_SUMMARIZE_EXTERNAL_HINTS = ("--mode cloud", "--mode hybrid", "cloud", "hybrid", "translation", "--tts", "search")
+
+
+def _desen_component() -> "dict | None":
+    """检测 desensitization-sop 组件是否已装（本地 components/ 下且 manifest 可解析）。"""
+    m = _load_manifest("desensitization-sop")
+    if not m:
+        return None
+    entry = KIT_DIR / "components" / "desensitization-sop" / (m.get("commands", [{}])[0].get("entry") or "")
+    if not entry.is_file():
+        return None
+    return {"manifest": m, "entry": entry}
+
+
+def _run_desen_scan(paths):
+    """调用 desen scan 子命令做外发前强制扫描。返回 (passed: bool, output: str)。"""
+    desen = _desen_component()
+    venv_py = _venv_python()
+    if not desen or not venv_py.is_file():
+        return False, "DESEN 组件或虚拟环境缺失，无法执行 scan"
+    env = dict(os.environ)
+    env["UV_PROJECT_ENVIRONMENT"] = str(venv_py.parent)
+    env["OFFICE_KIT_ROOT"] = str(KIT_DIR)
+    cmd = [str(venv_py), str(desen["entry"]), "scan"] + list(paths)
+    try:
+        proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    except Exception as exc:  # noqa: BLE001
+        return False, "desen scan 调用失败：%s" % exc
+    out = (proc.stdout or "").strip() + ("\n" + proc.stderr.strip() if proc.stderr and proc.stderr.strip() else "")
+    # 注意：desen 的 cmd_scan 即使命中敏感信息也不返回非零退出码（只打印命中汇总），
+    # 故不能仅凭 returncode==0 判「通过」。改为解析输出：命中敏感 → 出现「汇总：」；
+    # 干净 → 出现「未发现已知敏感标识符」。两者皆无则视为异常，保守阻断（fail-safe）。
+    if "未发现已知敏感标识符" in out:
+        return True, out
+    if "汇总：" in out:
+        return False, out
+    return False, out or "（desen scan 无有效输出）"
+
+
+def _external_gate(target, rest):
+    """外发命令门禁。返回 (allow: bool, note: str)。allow=False 表示阻断。
+
+    分两路：
+    - DESEN 已装：强制前置 desen scan，未通过即阻断；
+    - DESEN 未装：显式提醒（风险告知前置）+ 组件最小脱敏兜底，不随意阻断。
+    同时支持环境变量 OFFICE_KIT_SKIP_EXTERNAL_GATE=1 显式跳过（用户自主放行，
+    与 security-scan 的 Skip 档一致）。
+    """
+    if os.environ.get("OFFICE_KIT_SKIP_EXTERNAL_GATE") == "1":
+        return True, "（已显式跳过外发门禁 OFFICE_KIT_SKIP_EXTERNAL_GATE=1）"
+    desen = _desen_component()
+    if desen is None:
+        # 未装 DESEN：不阻断，但显式提醒风险。
+        return True, (
+            "⚠ 未检测到脱敏技能（desensitization-sop 未安装）。本次「%s」属外发动作，"
+            "未经完整脱敏，请自行确认待发内容不含敏感信息。" % target
+        )
+    # 已装 DESEN：强制前置 scan。
+    paths = [a for a in rest if not a.startswith("-") and not a.startswith("--")]
+    passed, out = _run_desen_scan(paths)
+    if passed:
+        return True, "✓ 外发前 desen scan 通过"
+    return False, (
+        "✗ 外发必扫 DESEN 未通过，已阻断「%s」执行。\n"
+        "  请先运行 `desen run <文档> --out workbench/desen/` 完成脱敏后再外发。\n"
+        "  扫描详情：\n%s" % (target, out or "（无输出）")
+    )
+
+
 def cmd_run(commands, argv):
     target = argv[0]
     rest = argv[1:]
@@ -669,6 +757,12 @@ def cmd_run(commands, argv):
     if not venv_py.is_file():
         sys.stderr.write("✗ 虚拟环境缺失：%s\n→ 请先运行 ./bootstrap.sh 初始化。\n" % venv_py)
         return 3
+    # 外发命令门禁（套件反馈 P0-②）：外发命令执行前强制前置 desen scan。
+    if target in EXTERNAL_COMMANDS:
+        allow, note = _external_gate(target, rest)
+        print(note)
+        if not allow:
+            return 3
     # 集成层统一 venv 约定（2026-09-01，office-kit 设计评审反馈）：
     # 显式向组件进程注入 venv 真相源，避免组件自行 re-exec 到错误路径。
     #   UV_PROJECT_ENVIRONMENT → kit 根 .venv（doc-layout / info-extract 优先读取）
@@ -682,6 +776,377 @@ def cmd_run(commands, argv):
     except Exception as exc:  # noqa: BLE001
         sys.stderr.write("✗ 调用失败：%s\n" % exc)
         return 3
+
+
+# ---------------------------------------------------------------------------
+# 工作流（插件/预设）机制：扫描 workflows/*/workflow.json，按步骤分发既有的
+# 套件内建命令 / 组件命令 / 外部 shell（media 环境），落工作记录链
+# （pipeline_state.json），支持人工确认门与断点续跑。
+# 设计原则（见 规划文档/插件预设机制可行性分析.md 方案 A）：
+#   * 工作流 = 对既有能力的可声明式编排，不重造逻辑；
+#   * 每步 uses 指向 kit 内建命令 / 组件命令 / shell（media 环境）；
+#   * state 链复用视频交付工作流既有的 pipeline_state 思路。
+# ---------------------------------------------------------------------------
+
+WORKFLOW_DIR = KIT_DIR / "workflows"
+
+
+def _scan_workflow_dirs():
+    """返回 workflows/ 下含 workflow.json 的目录名列表。"""
+    if not WORKFLOW_DIR.is_dir():
+        return []
+    out = []
+    for d in sorted(WORKFLOW_DIR.glob("*")):
+        if d.is_dir() and (d / "workflow.json").is_file():
+            out.append(d.name)
+    return out
+
+
+def _load_workflow(name):
+    """读取工作流契约；缺失/损坏返回 (None, 错误)。"""
+    p = WORKFLOW_DIR / name / "workflow.json"
+    if not p.is_file():
+        return None, "未找到工作流：%s（%s 不存在）" % (name, p)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return None, "workflow.json 解析失败：%s" % exc
+    if not data.get("workflow"):
+        return None, "workflow.json 缺 workflow 字段"
+    return data, None
+
+
+def _workflow_state_path(data, params):
+    """解析工作记录链根目录与 pipeline_state.json 路径。"""
+    ws = params.get("workspace") or str(WORKFLOW_DIR / data["workflow"] / "_state")
+    root = Path(ws).expanduser()
+    root.mkdir(parents=True, exist_ok=True)
+    return root / "pipeline_state.json", root
+
+
+def _load_state(state_path):
+    if state_path.is_file():
+        try:
+            return json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            pass
+    return {"workflow": None, "steps": {}}
+
+
+def _resolve_uses(uses, cmds):
+    """把 uses 解析为 (kind, tokens)。
+    kind: 'component'（注册命令）/ 'kit'（内建）/ 'shell'（media 等外部）。
+    """
+    if isinstance(uses, dict):
+        if "component" in uses:
+            return "component", [uses["component"]] + list(uses.get("args", []))
+        if "kit" in uses:
+            return "kit", [uses["kit"]] + list(uses.get("args", []))
+        if "shell" in uses:
+            return "shell", uses["shell"]
+        return "shell", json.dumps(uses, ensure_ascii=False)
+    toks = uses.split()
+    cmd = toks[0]
+    if cmd in cmds:
+        return "component", toks
+    if cmd in ("list", "overlaps", "doctor", "check", "upgrade", "repair", "workflow"):
+        return "kit", toks
+    return "shell", uses
+
+
+def _run_step_uses(kind, tokens, cmds, dry):
+    """执行单步 uses；返回 (rc, note)。dry 仅打印。"""
+    if kind == "component":
+        rec = cmds[tokens[0]]
+        venv_py = _venv_python()
+        entry = KIT_DIR / "components" / rec["component"] / rec["entry"]
+        if dry:
+            print("  [dry-run] component %s → %s %s %s" % (tokens[0], venv_py, entry, " ".join(tokens[1:])))
+            return 0, "dry-run"
+        if not venv_py.is_file():
+            return 3, "venv 缺失"
+        env = dict(os.environ)
+        env["UV_PROJECT_ENVIRONMENT"] = str(venv_py.parent)
+        env["OFFICE_KIT_ROOT"] = str(KIT_DIR)
+        try:
+            proc = subprocess.run([str(venv_py), str(entry)] + tokens[1:], env=env)
+            return proc.returncode, "ok"
+        except Exception as exc:  # noqa: BLE001
+            return 3, "调用失败：%s" % exc
+    if kind == "kit":
+        if dry:
+            print("  [dry-run] kit %s" % " ".join(tokens))
+            return 0, "dry-run"
+        rc = main(tokens)  # 复用主分发（doctor/list 等）
+        return (rc or 0), "ok"
+    # shell（media 环境等）
+    if dry:
+        print("  [dry-run] shell: %s" % tokens)
+        return 0, "dry-run"
+    try:
+        proc = subprocess.run(tokens, shell=True)
+        return proc.returncode, "ok"
+    except Exception as exc:  # noqa: BLE001
+        return 3, "shell 失败：%s" % exc
+
+
+def _eval_when(when, params):
+    """极简条件：支持 'k==v' / 'k!=v' / 'k in a,b,c' / 'k not in a,b,c' / 单 token 真值。
+    值缺失（None/空）时按空串参与比较，避免 str(None) 造成的误判。"""
+    when = when.strip()
+    # in / not in：值列表匹配（逗号分隔，去空白）
+    m = re.match(r"^(\w+)\s+(not\s+in|in)\s+(.+)$", when)
+    if m:
+        k, op, raw = m.group(1), m.group(2), m.group(3)
+        vals = [x.strip().strip('"\'') for x in raw.split(",") if x.strip()]
+        cur = str(params.get(k) or "")
+        hit = cur in vals
+        return (not hit) if op.startswith("not") else hit
+    # == / !=
+    m = re.match(r"^(\w+)\s*(==|!=)\s*(.+)$", when)
+    if m:
+        k, op, v = m.group(1), m.group(2), m.group(3).strip().strip('"\'')
+        cur = str(params.get(k) or "")
+        return cur == v if op == "==" else cur != v
+    return bool(params.get(when))
+
+
+def _subst_params(s, params):
+    """把 {k} 替换为 params[k]（缺失保留原样）。"""
+
+    def _rep(mm):
+        key = mm.group(1)
+        return str(params[key]) if key in params else mm.group(0)
+
+    return re.sub(r"\{(\w+)\}", _rep, s)
+
+
+def cmd_workflow(cmds, argv):
+    if not argv or argv[0] in ("-h", "--help", "list"):
+        names = _scan_workflow_dirs()
+        if not names:
+            print("未发现有工作流（workflows/ 下无含 workflow.json 的目录）。")
+            return 0
+        print("office-kit 工作流（扫描 workflows/*/workflow.json）：\n")
+        for n in names:
+            data, err = _load_workflow(n)
+            if err:
+                print("  ✗ %-22s %s" % (n, err))
+                continue
+            trig = data.get("trigger", {})
+            kw = trig.get("intent_keywords", []) if isinstance(trig, dict) else []
+            print("  · %-22s v%s" % (data.get("workflow"), data.get("version", "?")))
+            print("      触发：%s" % ("/".join(kw) if kw else "（无）"))
+            print("      步骤：%d" % len(data.get("steps", [])))
+        return 0
+    if argv[0] == "run":
+        return _workflow_run(cmds, argv[1:])
+    if argv[0] == "step-done":
+        return _workflow_step_done(cmds, argv[1:])
+    if argv[0] == "show":
+        return _workflow_show(cmds, argv[1:])
+    sys.stderr.write("✗ 未知 workflow 子命令：%s\n" % argv[0])
+    return 2
+
+
+def _workflow_show(cmds, argv):
+    """查看单个工作流详情：kit workflow show <name>"""
+    if not argv:
+        sys.stderr.write("✗ 用法：kit workflow show <name>\n")
+        return 2
+    name = argv[0]
+    data, err = _load_workflow(name)
+    if err:
+        sys.stderr.write("✗ %s\n" % err)
+        return 2
+    print("工作流：%s v%s" % (data.get("workflow"), data.get("version", "?")))
+    print("标题：%s" % data.get("title", ""))
+    print("描述：%s" % data.get("description", ""))
+    trig = data.get("trigger", {})
+    if isinstance(trig, dict) and trig.get("intent_keywords"):
+        print("触发词：%s" % "/".join(trig["intent_keywords"]))
+    params = data.get("params", {}) or {}
+    if params:
+        print("参数：")
+        for k, v in params.items():
+            if isinstance(v, dict):
+                d = v.get("default")
+                # default 为 None 或缺失 → 视为无默认（需显式传入）；空串 → 可选留空
+                label = "（无默认）" if (d is None or "default" not in v) else repr(d)
+            else:
+                label = repr(v)
+            print("  %-18s 默认=%s" % (k, label))
+    steps = data.get("steps", []) or []
+    print("步骤（%d）：" % len(steps))
+    for i, s in enumerate(steps, 1):
+        tag = "agent" if s.get("executor") == "agent" else ("runner" if s.get("uses") else "-")
+        when = (" [when: %s]" % s["when"]) if s.get("when") else ""
+        print("  #%-2d %-22s %s%s" % (i, s.get("id"), tag, when))
+    return 0
+
+
+def _workflow_step_done(cmds, argv):
+    """Agent 完成 executor=agent 步骤后回填状态：kit workflow step-done <name> <step_id> [--workspace <dir>]"""
+    parser = argparse.ArgumentParser(prog="kit.py workflow step-done", add_help=True)
+    parser.add_argument("name", help="工作流名")
+    parser.add_argument("step_id", help="待回填的步骤 id")
+    parser.add_argument("--workspace", default=None, help="工作记录链根目录（同 run）")
+    try:
+        opts = parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    data, err = _load_workflow(opts.name)
+    if err:
+        sys.stderr.write("✗ %s\n" % err)
+        return 2
+
+    # 复用 run 的参数合并逻辑（仅取默认值 + workspace 覆盖）
+    params = {}
+    for k, v in (data.get("params", {}) or {}).items():
+        params[k] = v.get("default") if isinstance(v, dict) else v
+    if opts.workspace:
+        params["workspace"] = opts.workspace
+
+    state_path, _ = _workflow_state_path(data, params)
+    state = _load_state(state_path)
+    step_rec = state.setdefault("steps", {}).get(opts.step_id)
+    if not step_rec:
+        sys.stderr.write("✗ 未找到步骤 %s 的状态记录（可能尚未运行到该步）。\n" % opts.step_id)
+        return 2
+
+    step_rec["status"] = "done"
+    step_rec["finished_at"] = datetime.now().isoformat(timespec="seconds")
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("✓ 步骤 %s 已回填为 done。加 --resume 续跑：kit workflow run %s --resume --workspace %s" % (
+        opts.step_id, data["workflow"], params.get("workspace") or "<workspace>"))
+    return 0
+
+
+def _workflow_run(cmds, argv):
+    parser = argparse.ArgumentParser(prog="kit.py workflow run", add_help=True)
+    parser.add_argument("name", help="工作流名（workflows/<name>）")
+    parser.add_argument("--resume", action="store_true", help="跳过已完成步骤，从断点续跑")
+    parser.add_argument("--step", type=int, default=None, help="仅运行第 N 步（1-based）")
+    parser.add_argument("--dry-run", action="store_true", help="仅打印计划不执行")
+    parser.add_argument("--yes", "-y", action="store_true", help="确认门自动通过（非交互）")
+    parser.add_argument("--param", action="append", default=[], help="覆盖参数 k=v（可多次）")
+    parser.add_argument("--workspace", default=None, help="工作记录链根目录（覆盖 params.workspace）")
+    try:
+        opts = parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    data, err = _load_workflow(opts.name)
+    if err:
+        sys.stderr.write("✗ %s\n" % err)
+        return 2
+
+    # 合并参数：声明默认值 + CLI 覆盖
+    params = {}
+    for k, v in (data.get("params", {}) or {}).items():
+        params[k] = v.get("default") if isinstance(v, dict) else v
+    for kv in opts.param:
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            params[k] = v
+    if opts.workspace:
+        params["workspace"] = opts.workspace
+
+    state_path, state_root = _workflow_state_path(data, params)
+    state = _load_state(state_path)
+    state.pop("completed_at", None)  # 清掉可能来自 dry-run / 上次失败运行的过期标记
+    state["workflow"] = data["workflow"]
+    state.setdefault("steps", {})
+    state["params"] = params
+
+    steps = data.get("steps", []) or []
+    print("▶ 工作流 %s v%s（%d 步）" % (data["workflow"], data.get("version", "?"), len(steps)))
+    print("  工作记录链：%s\n" % state_root)
+
+    overall_rc = 0
+    for i, step in enumerate(steps, start=1):
+        sid = step.get("id") or ("step%d" % i)
+        if opts.step and i != opts.step:
+            continue
+        # 续跑：跳过已完成
+        prev = state["steps"].get(sid)
+        if opts.resume and prev and prev.get("status") == "done":
+            print("✓ 跳过已完成步骤 #%d %s（--resume）" % (i, sid))
+            continue
+        # 条件 when
+        when = step.get("when")
+        if when and not _eval_when(when, params):
+            print("· 跳过步骤 #%d %s（条件不满足：%s）" % (i, sid, when))
+            state["steps"][sid] = {"status": "skipped", "when": when}
+            continue
+
+        print("▶ 步骤 #%d %s" % (i, sid))
+        uses = step.get("uses")
+        executor = step.get("executor")
+
+        # agent 步：无 uses、标 executor=agent——runner 不执行，标记 await_agent 并暂停，
+        # 由驱动 Agent 按蓝本对应章节完成后再 `workflow step-done` 回填 + `--resume` 续跑。
+        if not uses and executor == "agent":
+            if opts.dry_run:
+                print("  [dry-run] agent 步（executor=agent，交 Agent 执行）：%s" % step.get("desc", ""))
+                continue
+            started = datetime.now().isoformat(timespec="seconds")
+            state["steps"][sid] = {
+                "status": "await_agent",
+                "started_at": started,
+                "executor": "agent",
+                "desc": step.get("desc"),
+                "writes": step.get("writes"),
+                "checkpoint": step.get("checkpoint"),
+            }
+            state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            print("  ⏸ 待 Agent 执行（executor=agent，无 uses）：%s" % step.get("desc", ""))
+            print("     → Agent 完成后执行：kit workflow step-done %s %s（再 --resume 续跑）" % (data["workflow"], sid))
+            print("  已暂停于 agent 步。")
+            return 0
+
+        kind, tokens = _resolve_uses(uses, cmds) if uses else ("shell", "")
+        if isinstance(tokens, str):
+            tokens = _subst_params(tokens, params)
+        else:
+            tokens = [_subst_params(t, params) for t in tokens]
+
+        started = datetime.now().isoformat(timespec="seconds")
+        rc, note = (0, "no-op") if not uses else _run_step_uses(kind, tokens, cmds, opts.dry_run)
+        if rc != 0:
+            overall_rc = rc
+            state["steps"][sid] = {"status": "failed", "started_at": started, "rc": rc, "note": note}
+            state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            print("  ✗ 步骤 #%d %s 失败（rc=%s）：%s" % (i, sid, rc, note))
+            break
+
+        # 确认门
+        chk = step.get("checkpoint")
+        if chk == "confirm" and not opts.yes and not opts.dry_run:
+            if not _confirm("  确认继续？（步骤 #%d %s）" % (i, sid)):
+                state["steps"][sid] = {"status": "await_confirm", "started_at": started}
+                state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+                print("  已暂停于确认门。重跑加 --resume 可从此步继续。")
+                return 0
+
+        finished = datetime.now().isoformat(timespec="seconds")
+        state["steps"][sid] = {
+            "status": "done",
+            "started_at": started,
+            "finished_at": finished,
+            "uses": uses,
+            "writes": step.get("writes"),
+            "confirm": (chk if chk else None),
+        }
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("  ✓ 完成（%s）" % note)
+
+    if overall_rc == 0 and not opts.dry_run:
+        state["completed_at"] = datetime.now().isoformat(timespec="seconds")
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("\n工作流执行完成 ✅  工作记录链：%s" % state_path)
+    return overall_rc
 
 
 HELP_TEXT = """office-kit 动态注册与分发器
@@ -700,6 +1165,13 @@ HELP_TEXT = """office-kit 动态注册与分发器
                        （--component <name> --title <t> --detail <d>
                         [--severity low|medium|high|critical] [--repro ...] [--contact ...]）
   run <command> [...]  显式分发（等价于直接 <command> [...]）
+  workflow list        列出全部工作流（扫描 workflows/*/workflow.json）
+  workflow show <name> 查看单个工作流详情（参数/步骤/触发词）
+  workflow run <name> [--resume] [--step N] [--dry-run] [--yes] [--param k=v] [--workspace <dir>]
+                      加载工作流契约并按步骤分发（套件命令/组件命令/shell），落工作记录链
+                      executor=agent 步会暂停，由 Agent 完成后 step-done 回填再 --resume
+  workflow step-done <name> <step_id> [--workspace <dir>]
+                      Agent 完成 executor=agent 步骤后回填该步状态为 done（供 --resume 续跑）
 
 分发命令：
   <command> [参数...]   动态分发到对应组件（扫描 components/*/manifest.json 生成映射）
@@ -738,6 +1210,8 @@ def main(argv=None):
         return cmd_repair(comps, argv[1:])
     if sub == "feedback":
         return cmd_feedback(comps, argv[1:])
+    if sub == "workflow":
+        return cmd_workflow(cmds, argv[1:])
     if sub == "run":
         return cmd_run(cmds, argv[1:])
     # 默认：首个参数为命令名，直接分发

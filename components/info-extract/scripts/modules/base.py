@@ -29,6 +29,8 @@ class SourceType:
     VIDEO = "video"            # 本地视频文件：阶段二（文案提取，复用音频转录）
     VIDEO_ONLINE = "video_online"  # 在线/加密视频 URL：阶段五（受限场景）
     VIDEO_ONLINE_ENUM = "video_online_enum"  # 账号/合集枚举（阶段五增强，方案 B）
+    LIVE = "live"              # 直播链接录制（上游需求 P0）：阶段六
+    CAPTURE = "capture"        # 视频采集设备摄取（上游需求 P1）：阶段六
 
 
 @dataclass
@@ -39,9 +41,12 @@ class Segment:
     end: float  # 秒
     text: str
     words: List[Dict[str, Any]] = field(default_factory=list)  # [{word,start,end,prob}]
+    # D16/组件反馈 P0-②：校正版逐字稿——text 为校正后文本，raw_text 保留原始识别
+    raw_text: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        return d
 
 
 @dataclass
@@ -68,6 +73,9 @@ class ExtractResult:
     # D16 交付物范式：原始识别（单一备查副本）与纠正版稿件（交付物）
     raw_text: Optional[str] = None   # 识别结果备查副本（单一，raw）；不另存多份
     corrected: Optional[Dict[str, Any]] = None  # 纠正版稿件元数据（见 modules.corrector），无则 None
+    # 组件反馈 P0-②/P1-③：校正后的带时间戳片段 + 逐条改动清单（供逐字稿与校正过程文件落盘）
+    corrected_segments: Optional[List[Segment]] = None  # text=校正后、raw_text=原始，时间码对齐
+    correction_entries: Optional[List[Dict[str, Any]]] = None  # [{start, raw, corrected, kind}]
 
     def to_contract(self) -> Dict[str, Any]:
         """序列化为结构化通道字典（供 JSON / MD 输出 / 缓存）。
@@ -86,6 +94,9 @@ class ExtractResult:
             "corrected": self.corrected,  # D16：纠正版稿件元数据
             "provider_meta": self.provider_meta,
             "segments": [seg.to_dict() for seg in self.segments],  # 带时间戳片段（音频/视频）
+            # 组件反馈 P0-②/P1-③：校正后片段 + 逐条改动清单（进入契约，缓存可还原）
+            "corrected_segments": [seg.to_dict() for seg in self.corrected_segments] if self.corrected_segments else None,
+            "correction_entries": self.correction_entries,
         }
 
 
@@ -109,9 +120,20 @@ def contract_to_result(contract: Dict[str, Any]) -> "ExtractResult":
         Segment(
             start=s["start"], end=s["end"], text=s["text"],
             words=s.get("words", []),
+            raw_text=s.get("raw_text"),
         )
         for s in contract.get("segments", [])
     ]
+    corrected_segs = None
+    if contract.get("corrected_segments"):
+        corrected_segs = [
+            Segment(
+                start=s["start"], end=s["end"], text=s["text"],
+                words=s.get("words", []),
+                raw_text=s.get("raw_text"),
+            )
+            for s in contract["corrected_segments"]
+        ]
     return ExtractResult(
         source=contract["source"],
         text=contract["text"],
@@ -123,6 +145,8 @@ def contract_to_result(contract: Dict[str, Any]) -> "ExtractResult":
         segments=segs,
         raw_text=contract.get("raw_text"),
         corrected=contract.get("corrected"),
+        corrected_segments=corrected_segs,
+        correction_entries=contract.get("correction_entries"),
     )
 
 

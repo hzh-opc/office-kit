@@ -1,0 +1,49 @@
+{
+  "workflow": "minimal-demo",
+  "version": "0.1.0",
+  "description": "机制验证示例：加载契约→调 kit 内建命令→确认门→落工作记录链→续跑。不依赖模型，纯验证编排层。",
+  "trigger": {
+    "intent_keywords": ["机制验证", "demo", "minimal", "工作流自测"],
+    "match": "any"
+  },
+  "params": {
+    "workspace": {"default": "", "desc": "工作记录链根（默认 workflows/minimal-demo/_state）"}
+  },
+  "requires": ["doctor(内建)", "list(内建)"],
+  "state": {
+    "root": "<workspace>/_state",
+    "schema": ["pipeline_state.json"]
+  },
+  "steps": [
+    {
+      "id": "env-check",
+      "uses": "doctor",
+      "desc": "调 kit 内建自检，验证 venv + 组件完整性（证明 runner 能分发 kit 命令）",
+      "writes": []
+    },
+    {
+      "id": "list-caps",
+      "uses": "list",
+      "desc": "列出已注册组件命令（证明复用发现机制）",
+      "writes": []
+    },
+    {
+      "id": "probe-extract",
+      "uses": "extract --help",
+      "desc": "分发到 info-extract 组件入口（证明 component 命令解析 + venv 注入）",
+      "writes": []
+    },
+    {
+      "id": "confirm-plan",
+      "checkpoint": "confirm",
+      "desc": "人工确认门（证明 HITL 暂停 / --resume 续跑）",
+      "writes": []
+    },
+    {
+      "id": "write-report",
+      "uses": {"shell": "mkdir -p {workspace}; printf '{\"ok\":true,\"steps\":4}\\n' > {workspace}/report.json"},
+      "desc": "写派生产物到工作记录链（证明 artifact 跟踪 + {workspace} 占位符替换；用 mkdir/printf 避免依赖 python3 路径）",
+      "writes": ["report.json"]
+    }
+  ]
+}

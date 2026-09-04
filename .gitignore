@@ -16,3 +16,7 @@ config/.env
 
 # 编辑/系统文件
 .DS_Store
+
+# 组件运行时缓存/测试残留（不入库）
+components/**/_verify_cache_test.bin
+components/**/scripts/.cache_verify/

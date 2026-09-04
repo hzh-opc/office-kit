@@ -26,6 +26,9 @@ def _build_registry() -> Dict:
     from modules.vision.providers import PROVIDERS as VISION_PROVIDERS
     from modules.video_online.providers import PROVIDERS as VIDEO_ONLINE_PROVIDERS
     from modules.video_online.providers import ENUM_PROVIDERS as VIDEO_ONLINE_ENUM_PROVIDERS
+    from modules.recorder import FfmpegRecorderProvider  # 阶段六 直播/设备录制（ffmpeg 后端）
+
+    RECORDER_PROVIDERS = [FfmpegRecorderProvider]
 
     return {
         SourceType.TRANSCRIPT: AUDIO_PROVIDERS,
@@ -39,6 +42,9 @@ def _build_registry() -> Dict:
         SourceType.VIDEO_ONLINE: VIDEO_ONLINE_PROVIDERS,
         # 阶段五增强（方案 B）：账号/合集枚举（抖音/小红书/B站 等），枚举出视频 URL 后逐条走下载管线
         SourceType.VIDEO_ONLINE_ENUM: VIDEO_ONLINE_ENUM_PROVIDERS,
+        # 阶段六 直播录制（P0）/ 设备摄取（P1）：ffmpeg 录制后端（D3 不留存 / 边录边转 / 增强 A–E）
+        SourceType.LIVE: RECORDER_PROVIDERS,
+        SourceType.CAPTURE: RECORDER_PROVIDERS,
     }
 
 

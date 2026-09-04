@@ -23,6 +23,12 @@
   python router.py 图片.png --confidence-threshold 0.9   # 调高置信度门控阈值
   python router.py 图片.png --context "这是一份化学实验报告"   # D16 纠正版稿件：提供语境消歧
   python router.py 录音.mp3 --no-correct                # D16 跳过纠正，直接以原始识别为交付物
+  # 直播录制（阶段六 P0）：录制直播为本地回放后转写
+  python router.py --live "https://live.douyin.com/xxx" --live-transcribe   # 边录边转，近实时出稿
+  python router.py --live "https://live.douyin.com/xxx" --cookies-from-browser chrome  # 需登录态直播
+  python router.py --live "https://live.douyin.com/xxx" --capture-path ./直播录屏.mp4  # browser 持登录态取流回退
+  # 设备摄取（阶段六 P1）：摄像头/采集卡/OBS 虚拟相机
+  python router.py --device "avfoundation:1:0" --duration 300   # macOS 摄像头录制 300 秒后转写
 """
 
 from __future__ import annotations
@@ -50,6 +56,9 @@ MODULE_MAP = {
     SourceType.DOC_EXTRACT: ("modules.doc_extract", "DocExtractModule"),
     SourceType.VIDEO: ("modules.video", "VideoModule"),
     SourceType.VIDEO_ONLINE: ("modules.video_online", "VideoOnlineModule"),
+    # 阶段六 上游需求：直播链接录制（P0）/ 视频采集设备摄取（P1）
+    SourceType.LIVE: ("modules.live", "LiveModule"),
+    SourceType.CAPTURE: ("modules.capture", "CaptureModule"),
 }
 
 
@@ -157,6 +166,9 @@ def build_options(args) -> Dict:
         "no_correct": getattr(args, "no_correct", False),
         "context": getattr(args, "context", None),
         "correct_model": getattr(args, "correct_model", None),
+        # 组件反馈「交互与展示优化」：交付物分区 + 敏感预检
+        "flat_out": getattr(args, "flat_out", False),
+        "desensitize": getattr(args, "desensitize", False),
         # 阶段五 在线/加密视频：用户提供本地录制文件走浏览器捕获回退（--capture-path）
         "capture_path": getattr(args, "capture_path", None),
         # 阶段五增强（方案 B）：账号/合集枚举 + cookie 适配（抖音/小红书/B站 等）
@@ -167,6 +179,17 @@ def build_options(args) -> Dict:
         "enum_interval": getattr(args, "enum_interval", 3.0),
         "no_throttle": getattr(args, "no_throttle", False),
         "enum_limit": getattr(args, "enum_limit", None),
+        # 阶段六 直播录制（P0）/ 设备摄取（P1）：新增参数（上游需求）
+        "live": getattr(args, "live", False),
+        "live_timeout": getattr(args, "live_timeout", 0),
+        "live_stop_on_end": getattr(args, "live_stop_on_end", False),
+        "live_transcribe": getattr(args, "live_transcribe", False),
+        "record_and_transcribe": getattr(args, "record_and_transcribe", False),
+        "device": getattr(args, "device", None),
+        "duration": getattr(args, "duration", None),
+        "keep_live": getattr(args, "keep_live", False),
+        # 录制静默超阈终止开关（默认启用；--no-stall-abort 关闭，仅告警）
+        "stall_abort": not getattr(args, "no_stall_abort", False),
     }
 
 
@@ -178,7 +201,7 @@ def run_check() -> int:
     print("\n[本地 Provider 可用性]")
     for cap in [SourceType.TRANSCRIPT, SourceType.OCR, SourceType.VISION,
                 SourceType.DOC_EXTRACT, SourceType.VIDEO, SourceType.VIDEO_ONLINE,
-                SourceType.VIDEO_ONLINE_ENUM]:
+                SourceType.VIDEO_ONLINE_ENUM, SourceType.LIVE, SourceType.CAPTURE]:
         provs = available_providers(cap)
         if not provs:
             print(f"  - {cap}: (尚未接入)")
@@ -242,6 +265,12 @@ def main(argv: List[str] | None = None) -> int:
                         help="纠正版稿件的语境/上下文（D16）：提供给本地模型用于消歧，如领域/术语/专有名词")
     parser.add_argument("--correct-model", default=None,
                         help="纠正用本地文本模型（ollama 标签，默认 qwen2.5:7b；需本机已拉取，零新依赖）")
+    # 组件反馈「交互与展示优化」：交付物分区 + 敏感预检
+    parser.add_argument("--flat-out", action="store_true",
+                        help="输出目录不拆「交付/存档」分区，平铺到输出目录（组件反馈 P0-① 降级，旧行为）")
+    parser.add_argument("--desensitize", "--redact-pii", action="store_true",
+                        help="交付前对识别稿做敏感信息检测并在交付卡片提示（组件反馈 P1-④；脱敏动作仍归 DESEN，"
+                             "本开关仅强化检测提示，如需真正脱敏请用 desensitization-sop）")
     # 阶段五 在线/加密视频选项
     parser.add_argument("--capture-path", default=None,
                         help="在线/加密视频：指定本地录制文件路径（播放中捕获产物），走 BrowserCapture 回退（§4 边界 #2）")
@@ -262,6 +291,27 @@ def main(argv: List[str] | None = None) -> int:
                         help="账号/合集批量处理：单账号最多处理的视频数（默认全部；超大账号建议分批，防风控/控成本）")
     parser.add_argument("--no-throttle", action="store_true",
                         help="关闭账号批量处理的限速间隔（仅当你明确拥有这些内容且接受平台风控风险时）")
+    # 阶段六 直播录制（P0）/ 设备摄取（P1）：上游需求新增参数
+    parser.add_argument("--live", action="store_true",
+                        help="进入直播录制模式（区别于点播下载）：录制直播为本地回放后转写（上游需求 P0）")
+    parser.add_argument("--live-timeout", type=int, default=0,
+                        help="直播录制最长时长（秒，0=不超时，直到直播结束或中断）；到点自动停止")
+    parser.add_argument("--live-stop-on-end", action="store_true",
+                        help="直播结束时（EOF/平台信号）自动停止录制（默认也监听，此开关显式强调）")
+    parser.add_argument("--live-transcribe", action="store_true",
+                        help="边录边转：录制同时持续送 video_transcript，近实时出稿（上游需求·机制二优先策略）")
+    parser.add_argument("--record-and-transcribe", action="store_true",
+                        help="先录制为本地文件、结束后再统一转写（机制二降级策略，稳定性更高）")
+    parser.add_argument("--device", default=None,
+                        help="视频采集设备摄取（P1）：设备描述符，如 \"avfoundation:1:0\"(macOS)/"
+                             "\"USB Video\"(Windows dshow)/ /dev/video0(Linux v4l2)/ DeckLink 设备")
+    parser.add_argument("--duration", type=int, default=None,
+                        help="设备录制时长（秒），到点自动停止；亦可作为直播硬超时（无 --duration 时设备默认 "
+                             "3600 秒硬超时，避免永录）")
+    parser.add_argument("--keep-live", action="store_true",
+                        help="保留录制副本（默认 D3 不留存，处理后即删，仅保留转写产物）")
+    parser.add_argument("--no-stall-abort", action="store_true",
+                        help="录制静默超阈时仅告警、不自动终止（默认静默超 90s 即主动终止并断流重连）")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出结果（供下游消费）")
     parser.add_argument("--check", action="store_true", help="仅自检能力/provider 可用性")
     parser.add_argument("--quiet", action="store_true", help="仅输出结果，不打印横幅")
@@ -270,30 +320,56 @@ def main(argv: List[str] | None = None) -> int:
     if args.check:
         return run_check()
 
-    if not args.inputs:
-        parser.error("未提供输入；用 router.py --check 查看能力，或传入音频文件。")
+    if not args.inputs and not (args.live or args.device):
+        parser.error("未提供输入；用 router.py --check 查看能力，或传入音频文件（直播用 --live <url>，设备用 --device <设备描述符>）。")
 
-    # 类型识别：拆分 URL 与本地文件（URL 归在线/加密视频，阶段五）
+    # 类型识别：拆分 URL 与本地文件（URL 默认归在线/加密视频，阶段五）
     url_inputs = [raw for raw in args.inputs if is_url(raw)]
     file_inputs = [raw for raw in args.inputs if not is_url(raw)]
 
-    # 类型识别
-    if args.type == "auto":
-        found, unsupported = discover(file_inputs, recursive=args.recursive)
-    else:
-        # 强制类型：把所有存在的本地文件当作该类型
+    # 阶段六 上游需求：直播/设备 优先于通用 URL 路由（--live / --device / --type live|capture）
+    forced = None
+    if args.type not in ("auto", None):
+        forced = args.type
+    elif args.live:
+        forced = SourceType.LIVE
+    elif args.device:
+        forced = SourceType.CAPTURE
+
+    if forced and forced != SourceType.VIDEO_ONLINE:
+        # 直播/设备：URL 与本地文件都按该类型路由（直播源为 URL；设备源来自 --device）
         found = []
         unsupported = []
-        for raw in file_inputs:
-            p = Path(raw).expanduser()
-            if p.exists() and p.is_file():
-                found.append((str(p.resolve()), args.type))
-            else:
-                unsupported.append(str(p))
-
-    # URL 输入 → 在线/加密视频（阶段五，已实现：yt-dlp 下载 / 浏览器捕获回退 / 账号枚举）
-    for u in url_inputs:
-        found.append((u, SourceType.VIDEO_ONLINE))
+        if forced == SourceType.CAPTURE:
+            # 设备摄取：输入来自 --device（非位置参数），构造占位输入供模块消费
+            found.append((args.device, SourceType.CAPTURE))
+        else:
+            for raw in args.inputs:
+                if forced == SourceType.LIVE:
+                    found.append((raw, SourceType.LIVE))
+                else:
+                    p = Path(raw).expanduser()
+                    if p.exists() and p.is_file():
+                        found.append((str(p.resolve()), forced))
+                    else:
+                        unsupported.append(str(p))
+    else:
+        # 自动类型：本地文件走 discover；URL → 在线/加密视频
+        if args.type == "auto":
+            found, unsupported = discover(file_inputs, recursive=args.recursive)
+        else:
+            # 强制类型为其它（如 video_online）：把所有存在的本地文件当作该类型
+            found = []
+            unsupported = []
+            for raw in file_inputs:
+                p = Path(raw).expanduser()
+                if p.exists() and p.is_file():
+                    found.append((str(p.resolve()), args.type))
+                else:
+                    unsupported.append(str(p))
+        # URL 输入 → 在线/加密视频（阶段五，已实现：yt-dlp 下载 / 浏览器捕获回退 / 账号枚举）
+        for u in url_inputs:
+            found.append((u, SourceType.VIDEO_ONLINE))
 
     if not found and unsupported:
         print("⚠️ 无受支持的文件。以下格式当前未支持或对应能力规划中：")
@@ -307,6 +383,9 @@ def main(argv: List[str] | None = None) -> int:
         groups.setdefault(stype, []).append(path)
 
     options = build_options(args)
+    # 组件反馈 P0-①：--flat-out 通过环境变量兜底到所有 output 调用点（含无 options 的 recorder）
+    if options.get("flat_out"):
+        os.environ["INFO_EXTRACT_FLAT_OUT"] = "1"
     all_results = []
 
     if not args.quiet and not args.json:
@@ -371,16 +450,41 @@ def main(argv: List[str] | None = None) -> int:
                     else:
                         print(f"   语言={r.fields.get('detected_language')} 时长={r.fields.get('duration_sec')}s "
                               f"置信度={r.confidence} 引擎={r.provider_meta.get('provider')}")
-                        if mr.get("online"):
+                        if mr.get("live"):
+                            lt = "（边录边转）" if r.fields.get("live_transcribe") else "（先录后转）"
+                            print(f"   直播录制{lt}：获取方式={r.fields.get('acquire_method')}；"
+                                  f"副本{'已保留(--keep-live)' if not mr.get('no_copy_saved') else '未保存(D3)'}")
+                            if mr.get("manifest"):
+                                print(f"   摄取清单(manifest)：{mr.get('manifest')}")
+                        elif mr.get("capture"):
+                            lt = "（边采边转）" if r.fields.get("live_transcribe") else "（先录后转）"
+                            print(f"   设备摄取{lt}：设备={mr.get('device')} 后端={mr.get('backend')}；"
+                                  f"副本{'已保留(--keep-live)' if not mr.get('no_copy_saved') else '未保存(D3)'}")
+                        elif mr.get("online"):
                             enc = "（加密/DRM）" if r.fields.get("encrypted") else ""
                             print(f"   在线/加密视频{enc}：获取方式={r.fields.get('acquire_method')}；"
                                   f"副本未保存(D3)，仅产出文案/字幕")
                             if r.fields.get("legal_risk_warning"):
                                 print(f"   ⚠️ {r.fields.get('legal_risk_warning')}")
-                    # D16 纠正版稿件状态（透明回显，D15/§4.7 同构）
+                    # D16 纠正版稿件状态（透明回显，D15/§4.7 同构）——组件反馈 P2-①：五态细分提示
                     cm = r.provider_meta.get("correction") if isinstance(r.provider_meta, dict) else None
                     if cm:
-                        print(f"   纠正(D16)：{cm['status']}" + (f"（{cm.get('model')}）" if cm.get('model') else ""))
+                        status = cm.get("status")
+                        print(f"   纠正(D16)：{status}" + (f"（{cm.get('model')}）" if cm.get('model') else ""))
+                        if status == "skipped:no-model":
+                            print(f"   ℹ️ 本机未配置纠正模型，可运行 `ollama pull qwen2.5:7b` 启用本地纠正")
+                        elif status == "skipped:error":
+                            print(f"   ⚠️ 纠正失败（模型不可达/超时），已保留原始识别")
+                        elif status == "skipped:empty":
+                            print(f"   ⚠️ 纠正模型未返回有效文本，已保留原始识别")
+                    # 组件反馈 P1-②：无纠正模型时显式降级提示（交付物=未校正识别稿）
+                    if r.corrected is None and r.source in (SourceType.TRANSCRIPT, SourceType.OCR, SourceType.VISION, SourceType.VIDEO, SourceType.VIDEO_ONLINE):
+                        print(f"   ⚠️ 本次未生成纠正版，以下为原始识别稿，仅供参考（未校正）")
+                    # 组件反馈 P1-④：敏感信息提示行（落盘后只读扫描结果）
+                    pii = r.media_ref.get("pii_scan") if isinstance(r.media_ref, dict) else None
+                    if pii and pii.get("total"):
+                        kinds = "、".join(f"{k.get('label')}×{k.get('count')}" for k in pii.get("kinds", []))
+                        print(f"   🔒 敏感信息：检出 {pii.get('total')} 处（{kinds}），外发前请脱敏（desensitization-sop）")
                     # D15 质量评分：透明回显质量档与建议（quality_scorer 驱动自动升级）
                     q = score(r)
                     qual = f"   质量：{q['quality']}"

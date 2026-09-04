@@ -3,7 +3,7 @@
   "version": "0.6.3",
   "dependencies": ["desensitization-sop"],
   "display_name": "info-extract 内容抽取",
-  "description": "音频转录 / OCR / 视频文案 / 画面解读 / 文档文本提取（本地优先、隐私闭环）",
+  "description": "音频转录 / OCR / 视频文案 / 画面解读 / 文档文本提取 / 直播录制 / 设备摄取（本地优先、隐私闭环）",
   "capabilities": [
     "transcribe-audio",
     "ocr",
@@ -12,7 +12,9 @@
     "video-online",
     "account-enum",
     "pdf-text-extract",
-    "office-text-extract"
+    "office-text-extract",
+    "live",
+    "capture"
   ],
   "commands": [
     {
@@ -20,7 +22,15 @@
       "aliases": ["info-extract"],
       "entry": "scripts/router.py",
       "category": "抽取处理链",
-      "description": "转录/OCR/视频/画面解读/文档文本提取；--type 取值：ocr/vision/transcript/doc_extract/video/video_online/video_online_enum"
+      "description": "转录/OCR/视频/画面解读/文档文本提取/直播录制/设备摄取；--type 取值：ocr/vision/transcript/doc_extract/video/video_online/video_online_enum/live/capture；直播：--live [--live-transcribe 边录边转] [--live-timeout N] [--live-stop-on-end] [--keep-live]；设备：--device <设备> [--duration N]"
     }
-  ]
+  ],
+  "sync": {
+    "source_repo": "~/Repositories/info-extract",
+    "synced_at": "2026-09-03",
+    "synced_files": ["SKILL.md", "scripts/modules/base.py", "scripts/provider_registry.py", "scripts/router.py", "scripts/modules/live/__init__.py", "scripts/modules/capture/__init__.py", "scripts/modules/recorder.py"],
+    "source_ref": "独立开发仓 main@02ff1b9（7 个本地提交未推远程）",
+    "note": "office-kit 侧 manifest.json 为打包层文件，源仓不含；能力 live/capture 由本次同步登记",
+    "warning": "⚠ 源仓 7 个提交（live/capture）尚未推送远程——在推送前执行 `kit upgrade info-extract` 会从 origin/main 拉取旧版并覆盖本同步。推送远程后方可恢复常规 upgrade 流程"
+  }
 }

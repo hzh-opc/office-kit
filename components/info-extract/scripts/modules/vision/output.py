@@ -14,9 +14,27 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from modules.base import ExtractResult
+from modules.output_common import resolve_output_dirs, detect_pii
+
+
+def _correction_status_hint(result: ExtractResult) -> str:
+    """按 provider_meta.correction.status 细分提示语（组件反馈 P2-①）。"""
+    meta = result.provider_meta or {}
+    corr = meta.get("correction") if isinstance(meta, dict) else None
+    status = (corr or {}).get("status") if corr else None
+    if status == "applied":
+        return ""
+    model = (corr or {}).get("model") if corr else None
+    hints = {
+        "skipped:disabled": "已通过 --no-correct 主动关闭纠正。",
+        "skipped:no-model": f"本机未配置纠正模型（{model or 'qwen2.5:7b'}），可运行 `ollama pull qwen2.5:7b` 启用。",
+        "skipped:error": "纠正失败（模型不可达或超时），已保留原始识别。",
+        "skipped:empty": "纠正模型未返回有效文本，已保留原始识别。",
+    }
+    return hints.get(status, "")
 
 
 def _to_md(result: ExtractResult) -> str:
@@ -48,6 +66,9 @@ def _to_md(result: ExtractResult) -> str:
         lines.append(result.text)
         lines.append("")
         lines.append("> 未经本地纠正（未配置本地文本模型或已 --no-correct），以上即原始识别文本。")
+        hint = _correction_status_hint(result)
+        if hint:
+            lines.append(f"> ℹ️ {hint}")
     # 识别结果备查（原始，未经纠正）
     lines.append("")
     lines.append("## 识别结果备查（原始，未经纠正）\n")
@@ -73,28 +94,46 @@ def write_outputs(
     out_dir: str | Path,
     stem: str,
     formats: Tuple[str, ...] = ("txt", "json", "md"),
+    flat_out: Optional[bool] = None,
 ) -> Dict[str, str]:
-    """把结果落到双通道（txt/json/md）。返回 {格式: 路径}。"""
+    """把结果落到双通道（txt/json/md + 交付物分区）。返回 {格式: 路径}。
+
+    组件反馈 P0-①：默认拆「交付/存档」两子目录；flat_out=True 平铺（旧行为）。
+    交付区：.txt（纠正版）/.md（可读版）；存档区：.json（含 raw_text）。
+    组件反馈 P1-②：无纠正模型时 .txt 用 .raw.txt 后缀显式标记降级。
+    """
     out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    deliver, archive = resolve_output_dirs(out_dir, flat_out=flat_out)
+    deliver.mkdir(parents=True, exist_ok=True)
+    if archive != deliver:
+        archive.mkdir(parents=True, exist_ok=True)
     written: Dict[str, str] = {}
 
+    degraded = result.corrected is None
+    txt_name = f"{stem}.raw.txt" if degraded else f"{stem}.txt"
+
     if "txt" in formats:
-        p = out_dir / f"{stem}.txt"
+        p = deliver / txt_name
         # 纯文本通道：视觉描述优先，无则退回 OCR 文字
         p.write_text(result.text or "", encoding="utf-8")
         written["txt"] = str(p)
     if "json" in formats:
-        p = out_dir / f"{stem}.json"
+        p = archive / f"{stem}.json"
         p.write_text(
             json.dumps(result.to_contract(), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         written["json"] = str(p)
     if "md" in formats:
-        p = out_dir / f"{stem}.md"
+        p = deliver / f"{stem}.md"
         p.write_text(_to_md(result), encoding="utf-8")
         written["md"] = str(p)
+
+    # 敏感信息轻量预检（P1-④）：只读扫描，结果挂 media_ref 供交付卡片提示
+    pii = detect_pii(result.text)
+    if pii is not None:
+        result.media_ref["pii_scan"] = pii
+
     return written
 
 

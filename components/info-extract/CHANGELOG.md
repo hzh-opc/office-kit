@@ -1,5 +1,20 @@
 # CHANGELOG · info-extract
 
+## [未发布] — 2026-09-04 · 交互与展示优化落地（组件反馈「交互与展示优化」7 项）
+
+### 新增（交付物组织 + 面向一般用户的可查阅性）
+- **交付物/存档物物理分区（P0-①）**：`audio/ocr/vision` 三处 `write_outputs` 默认拆「交付/存档」两子目录——交付区（`.txt` 纠正版 / `.md` 可读版）、存档区（`.srt`/`.json`/`.correction.md`）；`--flat-out` 或环境变量 `INFO_EXTRACT_FLAT_OUT=1` 降级平铺（旧行为）。契约（`.txt`=纠正版、`.json` 含 `raw_text`）不变，向下兼容。
+- **校正版逐字稿带时间码（P0-②）**：`corrector.maybe_correct` 对有 `segments` 的转录结果改为**逐段校正**（段数/顺序不变、时间码天然对齐），回写 `result.segments[i].text` 并置 `seg.raw_text`；`ExtractResult` 新增 `corrected_segments`/`correction_entries` 字段入契约；`.md`「纠正版稿件」区块改为带时间码校正逐字稿（每句 `[HH:MM:SS] 校正文本`）。
+- **校正过程文件落盘（P1-③）**：新增 `.correction.md` 通道（存档区），逐条记录「时间码｜原始识别｜校正后｜纠正类型」；无纠正/无改动时不生成。
+- **敏感信息轻量预检（P1-④）**：新增 `modules/pii_scan.py`（纯标准库正则，与 desensitization-sop 口径一致，含全角数字归一），落盘后只读扫描，命中结果挂 `media_ref.pii_scan`，交付汇总提示「检出 N 处，外发前请脱敏」；`--desensitize` 开关强化提示。脱敏动作仍归 DESEN，本组件只检测+提示。
+
+### 修复（降级透明化 + 状态透出）
+- **无纠正模型降级显式标记（P1-②）**：`corrected=None` 时交付 `.txt` 用 `.raw.txt` 后缀区分，`.md`/对话内显式提示「未校正」，并给 `ollama pull qwen2.5:7b` 启用引导。
+- **correction.status 五态透出（P2-①）**：`applied / skipped:disabled / skipped:no-model / skipped:error / skipped:empty` 五态在 `.md` 与 router 汇总中细分提示（no-model→启用引导、error→保留原始）。
+
+### 文档
+- `SKILL.md`：新增「四·五 对话内识别结果展示约定」（组件反馈 P1-①，写入组件自身，S4 场景同样生效）；§三 CLI 补 `--flat-out`/`--desensitize`；§四 补交付物分区与敏感提示说明。
+
 ## [0.6.3] — 2026-08-29 · 全面审查修复（缓存正确性 + 机器可读输出 + 文档对齐）
 
 ### 修复（P0/P1 实质缺陷）

@@ -1,0 +1,179 @@
+{
+  "workflow": "video-content-delivery",
+  "version": "0.1.0",
+  "title": "视频内容交付工作流",
+  "description": "视频内容（录屏/直播/自媒体/采集设备）→ 修正版逐字稿 + 交付文档（多形态） + 去边截图 + 多粒度切片视频 + 检索清单 + 文案。编排 office-kit(info-extract) 与 media 双环境；创作类步骤由 Agent 按蓝本执行，runner 记录状态与确认门。",
+  "blueprint_doc": "人类可读蓝本：工作区 ~/WorkBuddy/Skill-Dev/office-kit/视频内容交付工作流.md（唯一权威副本，隐私隔离，不随本仓库分发；各步骤章节引用见 state_schema 与各步 desc）",
+
+  "trigger": {
+    "intent_keywords": [
+      "视频内容交付", "视频转交付文档", "视频转讲义", "直播转写交付", "直播回放转讲义",
+      "按产品切片视频", "视频切片", "课程交付", "逐字稿交付", "录屏转文档",
+      "视频剪辑交付", "切片视频加文案"
+    ],
+    "priority_rule": "多步/交付物形态指定的意图优先本工作流；单步摄取/转录/摘要仍走 extract/summarize 单命令（见蓝本 §11.4 触发歧义裁决）"
+  },
+
+  "requires": {
+    "components": ["info-extract"],
+    "envs": ["office-kit .venv（kit 分发自动使用）", "media 隔离环境（裁切/转换/去边）"],
+    "external_tools": ["ffmpeg（media 环境内置 imageio-ffmpeg 静态二进制即可）"]
+  },
+
+  "optional_capabilities": {
+    "live": {
+      "desc": "直播链接原生摄取（extract --live，边录边转 + 增强 A–E）",
+      "status": "已同步 office-kit components/info-extract（2026-09-03，源=独立仓 main@02ff1b9）；⚠ info-extract 推送远程前勿对该组件执行 kit upgrade",
+      "degradation": "source=live_fallback 保留为录制完整性兜底（media ffmpeg 先录制为本地文件再转写），见蓝本 §1.1 / §10"
+    },
+    "capture": {
+      "desc": "采集设备原生摄取（extract --device，边采集边录制边转写）",
+      "status": "已同步 office-kit components/info-extract（2026-09-03，源=独立仓 main@02ff1b9）",
+      "degradation": "source=device_fallback 保留为兜底（ffmpeg avfoundation/dshow/v4l2 先采集为文件再转写）"
+    }
+  },
+
+  "params": {
+    "workspace":        { "default": "", "desc": "内容工作区根 <WORKSPACE>（必填，或用 --workspace 传入）" },
+    "source":           { "default": "file", "desc": "来源类型：file | online | live | live_fallback | device | device_fallback（*_fallback=info-extract 原生摄取未同步时的 media ffmpeg 降级路径）" },
+    "source_uri":       { "default": "", "desc": "来源地址/文件路径/直播 URL/设备名（按 source 解释）" },
+    "section":          { "default": "第1节", "desc": "节名（工作记录链与输出目录的隔离单元）" },
+    "deliverable_types":{ "default": "讲义", "desc": "交付文档形态，逗号分隔：讲义,文档,参考文档,教程,知识点汇总,文案" },
+    "granularity":      { "default": "none", "desc": "切片粒度：none（仅单节交付）| transcript（按逐字稿时间线）| catalog（按课程目录）| product（按产品，电商）" },
+    "copywriting":      { "default": "off", "desc": "是否产出文案：on | off（电商/带货场景置 on）" },
+    "ffmpeg_bin":       { "default": "", "desc": "ffmpeg 二进制路径（*_fallback 录制用；留空则从 media 环境 imageio_ffmpeg 自动探测）" },
+    "media_py":         { "default": "~/.workbuddy/binaries/python/envs/media/bin/python", "desc": "media 隔离环境解释器（含 imageio_ffmpeg；用于 *_fallback 的 ffmpeg 探测与裁切/去边脚本）" },
+    "office_kit_root":  { "default": "", "desc": "office-kit 根目录（脚本步骤用；留空=kit 自身解析）" }
+  },
+
+  "state_schema": {
+    "_comment": "工作记录链（蓝本 §0.4）：<workspace>/_work/ 下按节名隔离；pipeline_state.json 由 runner 自动维护（各步 status/rc/uses/writes）。下表为各步 owner 声明。",
+    "records": {
+      "ingestion_manifest.json":   { "owner": "ingest_*",      "consumers": ["transcribe", "ingest_records"], "ref": "蓝本 §1.1" },
+      "course_raw/*_raw.{json,txt,states.tsv}": { "owner": "transcribe", "consumers": ["anchor_states", "authoring"], "ref": "蓝本 §1.2" },
+      "transcript_meta.json":      { "owner": "transcribe",    "consumers": ["cut_plan"], "ref": "蓝本 §1.2" },
+      "unique_states.json":        { "owner": "anchor_states", "consumers": ["frames_ocr"], "ref": "蓝本 §2.1" },
+      "frames_manifest.json":      { "owner": "frames_ocr",    "consumers": ["authoring"], "ref": "蓝本 §2.2" },
+      "ocr_review.json":           { "owner": "frames_ocr",    "consumers": ["authoring", "copywriting"], "ref": "蓝本 §2.3" },
+      "crop_manifest.json":        { "owner": "crop_shots",    "consumers": ["verify"], "ref": "蓝本 §2.4" },
+      "transcript_headers.json":   { "owner": "authoring",     "consumers": ["cut_plan"], "ref": "蓝本 §3" },
+      "delivery_spec.json":        { "owner": "authoring",     "consumers": ["verify"], "ref": "蓝本 §0.5/§3" },
+      "copywriting.json":          { "owner": "copywriting",   "consumers": ["export_lists"], "ref": "蓝本 §3.5" },
+      "catalog.json / catalog_diff.json":            { "owner": "catalog_acquire", "consumers": ["cut_plan"], "ref": "蓝本 §4.2" },
+      "product_catalog.json / product_catalog_diff.json": { "owner": "product_catalog", "consumers": ["cut_plan"], "ref": "蓝本 §4.3" },
+      "cut_plan.json":             { "owner": "cut_plan",      "consumers": ["cutting", "export_lists"], "ref": "蓝本 §4.5（单一真源）" },
+      "cut_manifest.json":         { "owner": "cutting",       "consumers": ["export_lists", "verify"], "ref": "蓝本 §4.5" },
+      "blank_intervals.json":      { "owner": "cut_plan",      "consumers": ["cutting"], "ref": "蓝本 §4.4.3" }
+    }
+  },
+
+  "steps": [
+    { "id": "preflight",
+      "uses": { "kit": "doctor" },
+      "desc": "环境自检：venv 解释器 + 组件入口完整性（office-kit venv 必须可用）" },
+
+    { "id": "prepare_dirs",
+      "uses": { "shell": "mkdir -p '{workspace}/_work/{section}' '{workspace}/_work/{section}/course_raw' '{workspace}/课程交付/逐字稿_修正版' '{workspace}/课程交付/讲义' '{workspace}/课程交付/讲义截图' '{workspace}/课程交付/讲义截图_原始备份' '{workspace}/按章节/{section}'" },
+      "desc": "建目录骨架：工作记录链 + 交付物 + 按章节（蓝本 §7 目录结构）" },
+
+    { "id": "ingest_file",
+      "when": "source==file",
+      "uses": { "shell": "[ -n '{source_uri}' ] || { echo '✗ 缺少 source_uri（本地文件路径）；请以 --param source_uri=... 指定'; exit 3; }; cp -n '{source_uri}' '{workspace}/按章节/{section}/{section}.mp4' && echo ingested -> '{workspace}/按章节/{section}/{section}.mp4'" },
+      "desc": "来源=本地视频文件：直送归一化目录（蓝本 §0.6/§1.1）" },
+
+    { "id": "ingest_online",
+      "when": "source==online",
+      "uses": "extract '{source_uri}' --out '{workspace}/按章节/{section}'",
+      "desc": "来源=自媒体点播/在线视频：extract（yt-dlp 下载→转录，账号枚举+cookie+防风控）（蓝本 §0.6/§1.1）" },
+
+    { "id": "ingest_live_native",
+      "when": "source==live",
+      "uses": "extract --live '{source_uri}' --out '{workspace}/按章节/{section}'",
+      "desc": "来源=直播链接（原生）：extract --live 边录边转 + 健康探针/分段/重连/浏览器鉴权（蓝本 §0.6/§10；组件已同步 live 能力，2026-09-03）" },
+
+    { "id": "ingest_device_native",
+      "when": "source==device",
+      "uses": "extract --device '{source_uri}' --out '{workspace}/按章节/{section}'",
+      "desc": "来源=采集设备（原生）：extract --device 边采集边录制边转写（蓝本 §0.6/§10；组件已同步 capture 能力，2026-09-03）" },
+
+    { "id": "ingest_live_fallback",
+      "when": "source==live_fallback",
+      "uses": { "shell": "FF='{ffmpeg_bin}'; [ -z \"$FF\" ] && MP=$(eval echo {media_py}) && [ -n \"$MP\" ] && [ -x \"$MP\" ] && FF=$(\"$MP\" -c 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())' 2>/dev/null); [ -z \"$FF\" ] && FF=$(command -v ffmpeg 2>/dev/null); [ -z \"$FF\" ] && { echo '未找到 ffmpeg（请以 --param ffmpeg_bin=... 或 --param media_py=... 指定）'; exit 3; }; \"$FF\" -i '{source_uri}' -c copy '{workspace}/按章节/{section}/{section}_直播回放.mp4' && echo recorded -> '{workspace}/按章节/{section}/{section}_直播回放.mp4'" },
+      "desc": "来源=直播链接（降级）：media ffmpeg 先录制为本地回放文件（录制至直播结束），转写交 transcribe 步（蓝本 §1.1 临时方案；ffmpeg 探测链 ffmpeg_bin > media_py 的 imageio_ffmpeg > 系统 ffmpeg）" },
+
+    { "id": "ingest_device_fallback",
+      "when": "source==device_fallback",
+      "uses": { "shell": "echo '设备采集降级路径需按平台选择后端（macOS avfoundation / Windows dshow / Linux v4l2），参数因设备而异——由 Agent 按蓝本 §1.1 组装 ffmpeg 命令执行'; exit 3" },
+      "desc": "来源=采集设备（降级）：设备后端参数跨平台差异大，交 Agent 按蓝本 §1.1 现场组装执行后重跑本步前先置 source=file 指向录制产物" },
+
+    { "id": "transcribe",
+      "when": "source not in live,device",
+      "uses": "extract '{workspace}/按章节/{section}/{section}.mp4' --out '{workspace}/_work/{section}'",
+      "desc": "转录：extract（faster-whisper 本地，VAD 分块）→ course_raw/*.txt/states.tsv + transcript_meta.json（蓝本 §1.2；source=live/device 原生路径已边录边转，跳过本步）" },
+
+    { "id": "ingest_records",
+      "executor": "agent",
+      "checkpoint": "confirm",
+      "desc": "工作记录归位核验（蓝本 §1）：确认 ingestion_manifest.json（来源/方法/合规声明）与转录产物齐备，缺失则补记", "writes": ["ingestion_manifest.json"] },
+
+    { "id": "anchor_states",
+      "executor": "agent",
+      "checkpoint": "confirm",
+      "desc": "画面态压缩 + 锚点选帧（蓝本 §2.1/§2.2）：states.tsv 按 OCR 前 60 字符去重 → unique_states.json，定抽帧时刻（电商加商品锚点）", "writes": ["unique_states.json"] },
+
+    { "id": "frames_ocr",
+      "executor": "agent",
+      "checkpoint": "confirm",
+      "desc": "抽帧 + OCR 复核（蓝本 §2.2/§2.3）：按锚点抽帧命名归位，rapidocr 逐帧确认命中", "writes": ["frames_manifest.json", "ocr_review.json"] },
+
+    { "id": "crop_shots",
+      "executor": "agent",
+      "checkpoint": "confirm",
+      "desc": "截图去边（蓝本 §2.4，media 环境）：先备份原图再保守裁剪（保 ≥55% 面积、单边 ≤200px），文件名不变", "writes": ["crop_manifest.json"] },
+
+    { "id": "authoring",
+      "executor": "agent",
+      "checkpoint": "confirm",
+      "desc": "修正版逐字稿 + 交付文档（蓝本 §3/§3.4）：术语替换表修正、标 ▶ 时间节点；按 params.deliverable_types 指定形态写交付文档（多形态并存）；一次性提取 transcript_headers.json（供阶段四消费，不重复解析）", "writes": ["*_修正版.md", "交付文档.md", "transcript_headers.json", "delivery_spec.json"] },
+
+    { "id": "copywriting",
+      "when": "copywriting==on",
+      "executor": "agent",
+      "checkpoint": "confirm",
+      "desc": "文案生成（蓝本 §3.5，电商/产品场景）：卖点提炼→口播→标题正文→合规提示（极限词/价格/功效标注）；输入 course_raw + ocr_review + 可选 VLM + brand_glossary", "writes": ["copywriting.json", "文案.md"] },
+
+    { "id": "catalog_acquire",
+      "when": "granularity==catalog",
+      "executor": "agent",
+      "checkpoint": "confirm",
+      "desc": "目录获取（蓝本 §4.2）：来源优先级 用户显式（图片 OCR/文本/模板）> 逐字稿自动候选；落 catalog.json + catalog_diff.json，交用户确认", "writes": ["catalog.json", "catalog_diff.json"] },
+
+    { "id": "product_catalog",
+      "when": "granularity==product",
+      "executor": "agent",
+      "checkpoint": "confirm",
+      "desc": "产品目录（蓝本 §4.3）：用户清单 > 转录关键词 > VLM 画面检测；落 product_catalog.json + 差异报告，交用户确认", "writes": ["product_catalog.json", "product_catalog_diff.json"] },
+
+    { "id": "cut_plan",
+      "when": "granularity!=none",
+      "executor": "agent",
+      "checkpoint": "confirm",
+      "desc": "裁切计划（蓝本 §4.4/§4.5.1-2）：单一真源 cut_plan.json（时间戳优先级 + 空白检测 + 粒度映射）；派生人类可读「视频裁切计划_待确认.md」交确认", "writes": ["cut_plan.json", "blank_intervals.json", "视频裁切计划_待确认.md"] },
+
+    { "id": "cutting",
+      "when": "granularity!=none",
+      "executor": "agent",
+      "checkpoint": "confirm",
+      "desc": "执行裁切（蓝本 §4.5.3，media ffmpeg stream-copy）：输出目录按粒度参数化共存（小节_按目录/按转录/按产品），增量重切（plan vs manifest 比对），文件名用目录/产品标题保留别名", "writes": ["cut_manifest.json", "小节_*.mp4"] },
+
+    { "id": "export_lists",
+      "when": "granularity!=none",
+      "executor": "agent",
+      "desc": "导出清单/索引/文案汇总（蓝本 §5）：全部由 cut_manifest + catalog/product_catalog + copywriting 派生（utf-8-sig CSV + MD 索引），不各自硬编码", "writes": ["小节视频清单.csv", "产品切片清单.csv", "小节视频索引.md", "文案汇总.md"] },
+
+    { "id": "verify",
+      "executor": "agent",
+      "checkpoint": "confirm",
+      "desc": "全量校验（蓝本 §6）：截图引用零缺失/小节一致性/时长核验（<5s 误差）/目录或产品一致性/文案合规/工作记录链 sha256 完整/备份链；全部通过方可交付" }
+  ]
+}

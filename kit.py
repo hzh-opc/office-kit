@@ -658,11 +658,14 @@ def cmd_repair(components, args):
 
 # 外发命令：把信息送出本机的命令（含隐性外发）。键=命令名，值=说明。
 # 新增外发能力时须在此登记（套件 SKILL.md 外发边界清单同步维护）。
-EXTERNAL_COMMANDS = {
+# 显式外发：用户主动发起、明显上云/分享意图（如 tencent-doc 上传腾讯文档云端）。
+# 按 2026-09-04 套件政策细化：不主动脱敏，信息安全由用户与平台负责，门禁直接放行、不打扰。
+EXPLICIT_EXTERNAL = {
     "tencent-doc": "Markdown→腾讯文档云端（docs.qq.com）",
-    # summarize 的上云/翻译/TTS/联网补全由组件脚本自身在 --mode cloud/hybrid、
-    # translation、podcast --tts、search 等子动作触发外发，套件层在此按命令级
-    # 统一拦 summarize（其外发子动作由组件 skill_bridge 已装即必扫兜底）。
+}
+# 隐性外发：命令本身可能触发非用户明显意图的上云/联网（如 summarize 的翻译/TTS/联网补全）。
+# 按 2026-09-04 套件政策细化：不强制脱敏，仅命中敏感信息时显式提示，由用户决策（不阻断）。
+IMPLICIT_EXTERNAL = {
     "summarize": "摘要上云/翻译/TTS/联网补全/知识库沉淀等隐性外发",
 }
 
@@ -737,31 +740,44 @@ def _external_scan_targets(rest):
 
 
 def _external_gate(target, rest):
-    """外发命令门禁。返回 (allow: bool, note: str)。allow=False 表示阻断。
+    """外发命令门禁（套件反馈 P0-② 细化版，2026-09-04 用户拍板政策）。
 
-    分两路：
-    - DESEN 已装：强制前置 desen scan，未通过即阻断；
-    - DESEN 未装：显式提醒（风险告知前置）+ 组件最小脱敏兜底，不随意阻断。
-    同时支持环境变量 OFFICE_KIT_SKIP_EXTERNAL_GATE=1 显式跳过（用户自主放行，
-    与 security-scan 的 Skip 档一致）。
+    政策要点：
+    - 显式外发（EXPLICIT_EXTERNAL，如 tencent-doc 上传腾讯文档云端）：用户主动发起、
+      明显上云/分享意图。不主动脱敏，信息安全由用户与平台负责，门禁直接放行、不打扰。
+    - 隐性外发（IMPLICIT_EXTERNAL，如 summarize 的翻译/TTS/联网补全）：非用户明显意图
+      的上云/联网。不强制脱敏，但命中敏感信息时显式提示（warn），由用户自行决策，不阻断。
+    - 环境变量 OFFICE_KIT_SKIP_EXTERNAL_GATE=1 仍可直接跳过提示逻辑（与 security-scan 的
+      Skip 档一致）。
+
+    返回值 (allow, note)：新政策下 allow 始终为 True（门禁不再硬阻断）；note 为提示/说明，
+    空串表示不打扰。
     """
+    # 显式外发：用户主动发起、明显上云意图，不主动脱敏，直接放行、不打扰。
+    if target in EXPLICIT_EXTERNAL:
+        return True, ""
+    # 以下为隐性外发：显式提示，不阻断。
     if os.environ.get("OFFICE_KIT_SKIP_EXTERNAL_GATE") == "1":
-        return True, "（已显式跳过外发门禁 OFFICE_KIT_SKIP_EXTERNAL_GATE=1）"
+        return True, "（已显式跳过外发提示 OFFICE_KIT_SKIP_EXTERNAL_GATE=1）"
     desen = _desen_component()
     if desen is None:
-        # 未装 DESEN：不阻断，但显式提醒风险。
+        # 未装 DESEN：仅风险提醒，不阻断。
         return True, (
-            "⚠ 未检测到脱敏技能（desensitization-sop 未安装）。本次「%s」属外发动作，"
-            "未经完整脱敏，请自行确认待发内容不含敏感信息。" % target
+            "⚠ 隐性外发提示：「%s」可能触发上云/联网（如翻译/TTS/联网补全）。\n"
+            "  未检测到脱敏技能（desensitization-sop 未安装），请自行确认待发内容不含敏感信息。"
+            % target
         )
-    # 已装 DESEN：强制前置 scan。仅扫描真实存在的输入（排除选项值，见 _external_scan_targets）。
+    # 已装 DESEN：前置 scan，命中仅提示不阻断（见 _external_scan_targets 仅扫真实输入）。
     paths = _external_scan_targets(rest)
+    if not paths:
+        return True, ""
     passed, out = _run_desen_scan(paths)
     if passed:
-        return True, "✓ 外发前 desen scan 通过"
-    return False, (
-        "✗ 外发必扫 DESEN 未通过，已阻断「%s」执行。\n"
-        "  请先运行 `desen run <文档> --out workbench/desen/` 完成脱敏后再外发。\n"
+        return True, ""  # 扫描通过、无敏感：静默放行，不打扰
+    return True, (
+        "⚠ 隐性外发提示：「%s」命中敏感信息（见下方扫描结果），仍将继续执行"
+        "（按套件政策，隐性外发仅提示不阻断）。\n"
+        "  如需脱敏请先运行 `desen run <文档> --out workbench/desen/`。\n"
         "  扫描详情：\n%s" % (target, out or "（无输出）")
     )
 
@@ -811,10 +827,12 @@ def cmd_run(commands, argv):
             return 3
     else:
         py = venv_py
-    # 外发命令门禁（套件反馈 P0-②）：外发命令执行前强制前置 desen scan。
-    if target in EXTERNAL_COMMANDS:
+    # 外发命令门禁（套件反馈 P0-② 细化版，2026-09-04）：显式外发直接放行、不打扰；
+    # 隐性外发命中敏感信息仅显式提示、不阻断。门禁不再硬阻断（allow 恒为 True）。
+    if target in EXPLICIT_EXTERNAL or target in IMPLICIT_EXTERNAL:
         allow, note = _external_gate(target, rest)
-        print(note)
+        if note:
+            print(note)
         if not allow:
             return 3
     # 集成层统一 venv 约定（2026-09-01，office-kit 设计评审反馈）：

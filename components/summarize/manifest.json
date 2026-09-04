@@ -16,7 +16,7 @@
       "fallback": "minimal-stdlib",
       "external": true,
       "category": "抽取处理链",
-      "description": "摘要/提炼/关键词"
+      "description": "摘要/提炼/关键词（隐性外发子动作：翻译/TTS/联网补全；套件仅提示不阻断）"
     }
   ]
 }

@@ -14,6 +14,7 @@
       "aliases": ["summary"],
       "entry": "scripts/summarize.py",
       "fallback": "minimal-stdlib",
+      "external": true,
       "category": "抽取处理链",
       "description": "摘要/提炼/关键词"
     }

@@ -706,6 +706,36 @@ def _run_desen_scan(paths):
     return False, out or "（desen scan 无有效输出）"
 
 
+def _external_scan_targets(rest):
+    """从外发命令参数中提取应扫描的输入文件/目录。
+
+    仅把「真实存在的输入」纳入扫描；排除选项及其值（如 `--chars 50` 的 `50`、
+    `--title X` 的 `X`、`--format json`、`--out <路径>` 等），避免把它们误当扫描
+    目标传给 `desen scan` 导致参数非法并触发 fail-safe 误阻断。
+
+    处理规则：
+    - 以 `-` 开头的 token：选项本身；附着形式 `--out=...` 整体排除；空格形式
+      `--out <val>` 标记「跳过下一 token」（输出路径即使存在也不扫）。
+    - 其余 token：仅当 `os.path.exists` 为真（输入文件或目录）才纳入扫描。
+    """
+    out_flags = {"--out", "-o"}
+    targets, skip_next = [], False
+    for tok in rest:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok.startswith("-"):
+            head = tok.split("=", 1)[0]
+            if head in out_flags:
+                if "=" in tok:
+                    continue            # 附着形式 --out=... 已含值，整体排除
+                skip_next = True        # 空格形式 --out <val> 跳过下一 token
+            continue
+        if os.path.exists(tok):
+            targets.append(tok)
+    return targets
+
+
 def _external_gate(target, rest):
     """外发命令门禁。返回 (allow: bool, note: str)。allow=False 表示阻断。
 
@@ -724,8 +754,8 @@ def _external_gate(target, rest):
             "⚠ 未检测到脱敏技能（desensitization-sop 未安装）。本次「%s」属外发动作，"
             "未经完整脱敏，请自行确认待发内容不含敏感信息。" % target
         )
-    # 已装 DESEN：强制前置 scan。
-    paths = [a for a in rest if not a.startswith("-") and not a.startswith("--")]
+    # 已装 DESEN：强制前置 scan。仅扫描真实存在的输入（排除选项值，见 _external_scan_targets）。
+    paths = _external_scan_targets(rest)
     passed, out = _run_desen_scan(paths)
     if passed:
         return True, "✓ 外发前 desen scan 通过"

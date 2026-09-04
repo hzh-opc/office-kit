@@ -61,7 +61,8 @@
       "entry": "scripts/build_tencent_doc.py",
       "category": "美化交付",
       "description": "Markdown → 腾讯文档云端并套用版面美学（<输入.md> [--title 标题]；需 tencent-docs 插件且宿主已连接腾讯文档）",
-      "fallback": "none"
+      "fallback": "none",
+      "external": true
     }
   ]
 }

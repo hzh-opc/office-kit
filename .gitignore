@@ -20,3 +20,6 @@ config/.env
 # 组件运行时缓存/测试残留（不入库）
 components/**/_verify_cache_test.bin
 components/**/scripts/.cache_verify/
+
+# 工作流运行时状态（dry-run/运行产生，不入库）
+workflows/**/_state/

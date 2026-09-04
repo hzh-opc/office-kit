@@ -528,6 +528,10 @@ def mask_value(kind: str, value: str) -> str:
         return "[地址]"
     if kind == "cn_org":
         return "[机构]"
+    if kind == "classification":
+        # 密级标签：抹去具体等级（机密/绝密/秘密）与内部性（内部资料等），保留"密级"语义，
+        # 避免正文把"【机密】重大重组"泄露为具体密级。整体替换为通用密级占位。
+        return "[密级]"
     # 兜底：含生僻字/特殊字符 → 全掩码；否则首尾各留 1，中间掩码
     if _has_rare_or_special(value):
         return "*" * len(value)
@@ -602,7 +606,8 @@ def desensitize_text(text: str, mode: str, token_map: dict, counts: dict,
 
     # 3.2 顺序应用正则（先处理 ID/手机，避免银行卡重复命中；跨境标识在数字类之后，互不冲突）
     for kind in ["id_card", "phone", "bank_card", "ip", "email", "jwt",
-                 "plate", "passport", "iban", "swift", "vat", "intl_phone"]:
+                 "plate", "passport", "iban", "swift", "vat", "intl_phone",
+                 "classification"]:
         pat = patterns[kind]
         cb = _repl_closure(kind, mode, token_map, counts, hits)
         result = pat.sub(lambda m, _cb=cb: _cb(m), result)

@@ -62,10 +62,16 @@ VENV_PY = SKILL_DIR / "scripts" / ".venv" / ("Scripts" if os.name == "nt" else "
 # 版本解析
 # --------------------------------------------------------------------------- #
 def parse_version(text):
-    """把 '0.6.3' 解析为 (0, 6, 3)；失败返回 None。"""
+    """把 '0.6.3' 解析为 (0, 6, 3)；失败返回 None。
+
+    纯非数字字符串（如 'abc'）无法解析为版本，返回 None —— 避免被误判为
+    (0,) 全零版本，从而在比较时错误地认为「已是最新」而中止升级。
+    """
     if not text:
         return None
     text = str(text).strip().strip('"').strip("'").lstrip("vV")
+    if not any(ch.isdigit() for ch in text):
+        return None  # 纯非数字，无法解析为版本
     parts = []
     for seg in text.split("."):
         num = ""
@@ -75,7 +81,7 @@ def parse_version(text):
             else:
                 break
         parts.append(int(num) if num else 0)
-    return tuple(parts) if parts else None
+    return tuple(parts)
 
 
 def read_local_version():

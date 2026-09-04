@@ -352,6 +352,91 @@ def detect(caps, skills):
     return result
 
 
+# ---------------------------------------------------------------------------
+# 隐性外发确认闸口（2026-09-04 政策细化：扫描→提示→确认→否则阻断）
+# ---------------------------------------------------------------------------
+EXTERNAL_CONFIRM_ENV = "OFFICE_KIT_EXTERNAL_CONFIRM"
+
+
+def _merge_stats(a, b):
+    out = dict(a or {})
+    for k, v in (b or {}).items():
+        out[k] = out.get(k, 0) + v
+    return out
+
+
+def _local_pii_hits(texts):
+    """用本技能自带 pii_precheck 做本地 PII 预检，返回 {类别: 数量}（无则空）。"""
+    stats = {}
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from pii_precheck import precheck
+        for t in texts or []:
+            if not t:
+                continue
+            r = precheck(t, with_context=False)
+            stats = _merge_stats(stats, r.get("stats") or {})
+    except Exception:
+        pass
+    return stats
+
+
+def request_external_confirmation(purpose, texts=None, paths=None, pii_hits=None):
+    """隐性外发确认闸口（组件内部，confirm-or-block，安全默认=阻断）。
+
+    在组件把内容送出本机（如 podcast TTS 把讲稿全文送第三方语音合成）前调用。
+    返回 True=放行 / False=阻断。
+
+    确认逻辑：
+    - OFFICE_KIT_EXTERNAL_CONFIRM=allow → 放行（agent 已在对话中代用户确认）。
+    - =deny → 阻断（显式拒绝）。
+    - 未设 且 sys.stdin 是 TTY → 交互 input() 提示 y/N。
+    - 未设 且 非 TTY（agent / 管道调用）→ 安全默认阻断，打印提示，等 agent 代确认。
+
+    注：PII 检测仅用于提示增强，不影响阻断决策——任何隐性外发都需用户确认。
+    """
+    import sys as _sys
+    # 1) 本地 PII 预检（仅提示）
+    hits = dict(pii_hits or {})
+    if not hits:
+        hits = _local_pii_hits(texts)
+        if not hits and paths:
+            try:
+                for p in paths:
+                    if p and os.path.isfile(p):
+                        with open(p, "r", encoding="utf-8", errors="replace") as f:
+                            hits = _merge_stats(hits, _local_pii_hits([f.read()]))
+            except Exception:
+                pass
+    # 2) 提示
+    _sys.stderr.write("\n⚠ 隐性外发确认：%s\n" % purpose)
+    if hits:
+        kinds = "、".join("%s×%d" % (k, v) for k, v in sorted(hits.items()))
+        _sys.stderr.write("  本地预检检出疑似敏感信息：%s（建议先 `desen run` 脱敏）\n" % kinds)
+    else:
+        _sys.stderr.write("  本地预检未发现已知 PII（仍请确认内容不含敏感信息）。\n")
+    # 3) 确认
+    decision = os.environ.get(EXTERNAL_CONFIRM_ENV, "").strip().lower()
+    if decision == "allow":
+        _sys.stderr.write("  → 已确认（OFFICE_KIT_EXTERNAL_CONFIRM=allow），放行。\n")
+        return True
+    if decision == "deny":
+        _sys.stderr.write("  → 已显式拒绝，外发阻断。\n")
+        return False
+    if _sys.stdin.isatty():
+        try:
+            ans = input("  是否确认执行此外发？[y/N] ").strip().lower()
+        except Exception:
+            return False
+        if ans in ("y", "yes", "是"):
+            return True
+        _sys.stderr.write("  → 用户未确认，外发阻断。\n")
+        return False
+    _sys.stderr.write("  → 非交互环境未获确认，按安全默认阻断（已与用户确认请置 "
+                      "OFFICE_KIT_EXTERNAL_CONFIRM=allow 后重试）。\n")
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser(description="协同技能检测与对接（零依赖）")
     ap.add_argument("--map", help="capabilities JSON 路径（覆盖内置默认）")

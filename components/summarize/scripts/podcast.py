@@ -27,6 +27,11 @@ import re
 import json
 import argparse
 
+# 使同目录 skill_bridge 可被 import（request_external_confirmation 确认闸口）
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
 # ---------------------------------------------------------------------------
 # 读入
 # ---------------------------------------------------------------------------
@@ -373,6 +378,14 @@ def main():
 
     # 可选 TTS 合成（在输出讲稿之后，不影响讲稿产出）
     if args.tts and args.tts != "none":
+        # 隐性外发确认闸口（2026-09-04 政策细化）：讲稿全文将送第三方 TTS，
+        # 须用户确认后才执行；未确认按安全默认阻断（口播稿已照常生成）。
+        from skill_bridge import request_external_confirmation
+        if not request_external_confirmation(
+                purpose="podcast TTS 语音合成（讲稿全文将送第三方 TTS：%s）" % args.tts,
+                texts=[sc["full_text"]]):
+            sys.stderr.write("✗ 外发未获确认，已阻断 TTS 合成（口播稿已照常生成，可本地脱敏后重试）。\n")
+            sys.exit(3)
         audio_path = args.audio or (
             os.path.splitext(args.out)[0] + ".mp3"
             if args.out else (title + ".mp3"))

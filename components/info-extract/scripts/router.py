@@ -315,6 +315,9 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="以 JSON 输出结果（供下游消费）")
     parser.add_argument("--check", action="store_true", help="仅自检能力/provider 可用性")
     parser.add_argument("--quiet", action="store_true", help="仅输出结果，不打印横幅")
+    parser.add_argument("--external", action="store_true",
+                        help="声明本结果将外发/上云：检出敏感信息时触发确认闸口，"
+                             "未获确认则阻断（exit 3），避免含 PII 的识别稿被送出本机")
     args = parser.parse_args(argv)
 
     if args.check:
@@ -485,6 +488,13 @@ def main(argv: List[str] | None = None) -> int:
                     if pii and pii.get("total"):
                         kinds = "、".join(f"{k.get('label')}×{k.get('count')}" for k in pii.get("kinds", []))
                         print(f"   🔒 敏感信息：检出 {pii.get('total')} 处（{kinds}），外发前请脱敏（desensitization-sop）")
+                        if args.external:
+                            from skill_bridge import request_external_confirmation
+                            pii_hits = {k.get("label"): k.get("count") for k in pii.get("kinds", [])}
+                            if not request_external_confirmation(
+                                    purpose="识别稿外发（将送出本机）", pii_hits=pii_hits):
+                                sys.stderr.write("✗ 外发未获确认，已阻断（请勿将含敏感信息的识别稿送出本机）。\n")
+                                sys.exit(3)
                     # D15 质量评分：透明回显质量档与建议（quality_scorer 驱动自动升级）
                     q = score(r)
                     qual = f"   质量：{q['quality']}"

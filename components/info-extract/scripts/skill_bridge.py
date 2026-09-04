@@ -106,8 +106,108 @@ def has_desensitization() -> bool:
     return self_check(["desensitization"])["desensitization"] is not None
 
 
+def desensitization_skill_name() -> Optional[str]:
+    """返回已检出的脱敏技能名（无则 None）。"""
+    return self_check(["desensitization"])["desensitization"]
+
+
+# ---------------------------------------------------------------------------
+# 隐性外发确认闸口（2026-09-04 政策细化：扫描→提示→确认→否则阻断）
+# ---------------------------------------------------------------------------
+EXTERNAL_CONFIRM_ENV = "OFFICE_KIT_EXTERNAL_CONFIRM"
+
+_PII_LABEL = {
+    "id_card": "身份证号", "phone": "手机号", "bank_card": "银行卡号",
+    "email": "邮箱", "ip": "IP 地址", "plate": "车牌号", "passport": "护照号",
+}
+
+
+def _external_pii_hits(texts):
+    """用本组件自带 pii_scan 做本地只读预检，返回 {类别: 数量}（无则空）。"""
+    stats = {}
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from modules.pii_scan import scan_text
+        for t in texts or []:
+            if not t:
+                continue
+            r = scan_text(t)
+            for k, v in (r or {}).items():
+                stats[k] = stats.get(k, 0) + v
+    except Exception:
+        pass
+    return stats
+
+
+def request_external_confirmation(purpose, texts=None, paths=None, pii_hits=None):
+    """隐性外发确认闸口（组件内部，confirm-or-block，安全默认=阻断）。
+
+    在组件把内容送出本机（如识别稿外发、上云）前调用。返回 True=放行 / False=阻断。
+
+    确认逻辑：
+    - OFFICE_KIT_EXTERNAL_CONFIRM=allow → 放行（agent 已在对话中代用户确认）。
+    - =deny → 阻断（显式拒绝）。
+    - 未设 且 sys.stdin 是 TTY → 交互 input() 提示 y/N。
+    - 未设 且 非 TTY（agent / 管道调用）→ 安全默认阻断，打印提示，等 agent 代确认。
+
+    注：PII 检测仅用于提示增强，不影响阻断决策——任何隐性外发都需用户确认。
+    """
+    import sys as _sys
+    hits = dict(pii_hits or {})
+    if not hits:
+        hits = _external_pii_hits(texts)
+        if not hits and paths:
+            try:
+                for p in paths:
+                    if p and os.path.isfile(p):
+                        with open(p, "r", encoding="utf-8", errors="replace") as f:
+                            t = _external_pii_hits([f.read()])
+                            for k, v in t.items():
+                                hits[k] = hits.get(k, 0) + v
+            except Exception:
+                pass
+    _sys.stderr.write("\n⚠ 隐性外发确认：%s\n" % purpose)
+    if hits:
+        kinds = "、".join("%s×%d" % (_PII_LABEL.get(k, k), v) for k, v in sorted(hits.items()))
+        _sys.stderr.write("  本地预检检出疑似敏感信息：%s（建议先 `desen run` 脱敏）\n" % kinds)
+    else:
+        _sys.stderr.write("  本地预检未发现已知 PII（仍请确认内容不含敏感信息）。\n")
+    decision = os.environ.get(EXTERNAL_CONFIRM_ENV, "").strip().lower()
+    if decision == "allow":
+        _sys.stderr.write("  → 已确认（OFFICE_KIT_EXTERNAL_CONFIRM=allow），放行。\n")
+        return True
+    if decision == "deny":
+        _sys.stderr.write("  → 已显式拒绝，外发阻断。\n")
+        return False
+    if _sys.stdin.isatty():
+        try:
+            ans = input("  是否确认执行此外发？[y/N] ").strip().lower()
+        except Exception:
+            return False
+        if ans in ("y", "yes", "是"):
+            return True
+        _sys.stderr.write("  → 用户未确认，外发阻断。\n")
+        return False
+    _sys.stderr.write("  → 非交互环境未获确认，按安全默认阻断（已与用户确认请置 "
+                      "OFFICE_KIT_EXTERNAL_CONFIRM=allow 后重试）。\n")
+    return False
+
+
+def enforce_desen_scan_before_external(paths):
+    """外发前确认闸口（2026-09-04 政策细化：提示+确认，否则阻断）。
+
+    委托 request_external_confirmation 实现「扫描→提示→确认→否则阻断」。
+    返回 True=放行 / False=阻断（与套件层对隐性外发的口径一致：不静默放行）。
+    """
+    return request_external_confirmation(
+        purpose="识别稿外发 / 上云（paths=%s）" % (paths or []),
+        paths=paths)
+
+
 if __name__ == "__main__":
     print(json.dumps(self_check(), ensure_ascii=False, indent=2))
 
 
-__all__ = ["COOP_CAPS", "self_check", "has_desensitization"]
+__all__ = ["COOP_CAPS", "self_check", "has_desensitization",
+           "desensitization_skill_name", "enforce_desen_scan_before_external",
+           "request_external_confirmation"]

@@ -111,7 +111,7 @@ python router.py "https://www.douyin.com/user/MXoxxxx" --enum-interval 5 --enum-
 - **交付物分区（组件反馈 P0-①）**：默认输出目录拆「交付/存档」两子目录——**交付区**（`.txt` 纠正版 / `.md` 可读版）用户默认只看这里；**存档区**（`.srt` 原始带时间戳 / `.json` 结构化契约 / `.correction.md` 校正过程）仅备查/技能优化。用 `--flat-out` 可降级为平铺（旧行为）。音频/视频转录的交付稿为**带时间码的校正版逐字稿**（`.md` 内，每句 `[HH:MM:SS] 校正文本`）；无纠正模型时交付稿以 `.raw.txt` 后缀显式标记「未校正」。
 - **敏感信息提示（组件反馈 P1-④）**：识别稿落盘后做只读敏感预检（身份证/手机号/银行卡/邮箱等，纯本地正则），命中时在交付汇总提示「检出 N 处，外发前请脱敏」。脱敏动作仍归 DESEN（desensitization-sop），本组件只检测+提示，不重复实现脱敏；`--desensitize` 可显式强化该提示。
 - **能力声明（D9）**：本 SKILL.md 已暴露 `ocr`/`speech_transcription`/`video_transcript`/`image_understanding`/`video_online` 关键词，供 `summarize` 的 skill_bridge 自动发现；当前五者均已就绪（`ocr` 本地 rapidocr 离线、`image_understanding` 本地 VLM 走 ollama、`video_online` 走 yt-dlp 优先 / browser 回退，`router.py --check` 可见可用性，缺失则清晰引导安装）。
-- **隐私闭环（§4）**：敏感预检贯穿到上云门前强制脱敏（已装 DESEN 则调用、未装则提示）；临时文件私有 tmp、处理后即清（审阅 G）。
+- **隐私闭环 + 隐性外发确认闸口（2026-09-04 政策细化）**：凡把识别稿送出本机（交付 / 上云 / 外送），由 `skill_bridge.request_external_confirmation()`（即 `enforce_desen_scan_before_external` 现委托它）做**扫描→提示→确认→否则阻断**：先本地 `pii_scan` 只读预检（命中仅增强提示），再要求用户确认；**未确认按安全默认阻断（exit 3），agent 不得外送**。确认语义：`OFFICE_KIT_EXTERNAL_CONFIRM=allow` 放行（agent 已在对话中代用户确认）/ `=deny` 阻断 / 未设且 TTY 交互询问 `y/N` / 未设且非交互（agent / 管道）安全默认阻断。调用方式：`router.py <媒体> --external`（声明本结果将外发——检出敏感信息时触发确认闸口，未确认即阻断）；不传 `--external` 仅做落盘后只读敏感提示、不阻断。临时文件私有 tmp、处理后即清（审阅 G）。显式外发（用户主动 `tencent-doc` 上云等）按套件政策不主动脱敏，由用户与平台负责。
 
 ## 四·五、对话内识别结果展示约定（组件反馈 P1-①）
 
@@ -152,5 +152,7 @@ Agent 交付识别结果时，对话内须按以下卡片结构呈现：
 ### 5.2 协同技能缺失时的降级行为
 
 未检出 `desensitization-sop`（DESEN）时**自动降级、不报错**：本地处理正常进行，仅在需要上云脱敏时由智能体层提示「未安装脱敏技能」；同理 browser 技能缺失时在线加密视频自动回退或提示。检测逻辑见 `scripts/skill_bridge.py`（`python scripts/router.py --check` 可见协同能力可用性）。
+
+> **外发两路分流（「仅组件场景安全审计」落地，2026-09-04 按套件政策放宽为提示）**：本组件的 `skill_bridge.py` 提供 `enforce_desen_scan_before_external(paths)`——已装 DESEN 时返回 `prompt`（外发前建议跑 `desen scan`，命中敏感信息仅提示、不阻断）；未装时返回 `remind`（显式提醒 + 本地 `pii_scan` 兜底）。与套件层「显式外发直接放行、隐性外发仅提示不阻断」口径一致。
 
 详细设计、模块契约、Provider 接口见 `references/reference.md`；决策记录见 `CHANGELOG.md`。

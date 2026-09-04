@@ -161,6 +161,14 @@ $PY <技能目录>/scripts/compare.py --local <本地摘要> --cloud <云端摘�
   3. **【处理结果】**：基于以上两者得出的结论 / 综合判断，明确其分别依赖了哪些原文、哪些联网补全。
 - 这与「本地优先 / 云端取方法」一致：扩充细节**优先以原文为权威来源**；联网补全只是原文不足时的受控补充，且全程可追溯。
 
+### 隐性外发确认闸口（2026-09-04 政策细化 · 重要）
+
+凡把内容送出本机的隐性外发动作（非用户明显意图的上云 / 第三方调用），执行前**必须用户确认，否则阻断**：
+
+- **`podcast --tts`**：讲稿全文将送第三方 TTS（edge / openai / azure）语音合成。运行 `podcast.py` 时由 `skill_bridge.request_external_confirmation` 触发确认闸口——先本地 PII 预检（命中仅增强提示），再要求确认；**未确认按安全默认阻断（exit 3）**，口播稿仍照常生成。
+- **确认语义（confirm-or-block）**：`OFFICE_KIT_EXTERNAL_CONFIRM=allow` → 放行（agent 已在对话中代用户确认）；`=deny` → 阻断；未设且交互终端（CLI 用户）→ 提示 `y/N`；未设且非交互（agent / 管道调用）→ 安全默认阻断。
+- **agent 调用契约**：agent 在触发 `--tts` / 联网补全 / 翻译等隐性外发前，**须先以 AskUserQuestion 向用户确认**；用户同意后以 `OFFICE_KIT_EXTERNAL_CONFIRM=allow` 运行组件，否则不触发外发。显式外发（用户主动 `tencent-doc` 上云等）按套件政策不主动脱敏，由用户与平台负责。
+
 ## 与「协同技能」检测、对接与容错（健壮性核心）
 
 > **设计原则**：本技能**不假定任何协同技能已安装**。开始处理前先动态检测本机/工作区已安装的技能能力，按检测结果决定取文路径与上云前脱敏；任一能力缺失时按 `fallback` 策略降级，**绝不因依赖缺失而报错中断**。检测基于**关键词泛匹配** SKILL.md 的 name/description/tags，**不限定具体技能名**——因此无论用户安装的是 `desensitization-sop`、自研脱敏技能，还是任意第三方 OCR / 语音 / 视频技能，都能被识别并对接（"非限定本机已安装技能"）。
@@ -226,8 +234,8 @@ $PY $SKILL_DIR/scripts/skill_bridge.py --exclude summarize --cap desensitization
   && echo "脱敏可用: $($PY $SKILL_DIR/scripts/skill_bridge.py --exclude summarize --cap desensitization | python3 -c 'import sys,json;print(json.load(sys.stdin)["skill"])')" \
   || echo "脱敏缺失"
 ```
-- **absent（未安装）**：跳过所有脱敏步骤，直接走本地处理（`mode=local` 默认安全，原始文本不出本机）。若用户要求 `cloud`/`hybrid`，仅上云 `summarize.py --brief` 产出的紧凑中间产物，并明确提示用户：未做脱敏、存在隐私风险，需用户自行确认。
-- **available（已安装）**：用 **Skill 工具**加载该脱敏技能，按其上云前/后闭环执行「脱敏、处理、回填、复核」：
+- **absent（未安装）**：跳过所有脱敏步骤，直接走本地处理（`mode=local` 默认安全，原始文本不出本机）。若用户要求 `cloud`/`hybrid`，仅上云 `summarize.py --brief` 产出的紧凑中间产物，并明确提示用户：未做脱敏、存在隐私风险，需用户自行确认。**此时「提醒」须有实际兜底支撑**——外发前先跑本技能内置 `pii_precheck.py` 做本地 PII 预检（见 §4.8 M），把命中清单与脱敏预览一并呈现，而非空口提示。
+- **available（已安装）**：用 **Skill 工具**加载该脱敏技能，**「已装即必扫」为代码级强制（「仅组件场景安全审计」P0-①）**——凡外发（含隐性外发：翻译/TTS/联网补全/知识库沉淀，见 §4.5/§4.7/§4.8）前，必须真跑该技能的 `scan`/`run` 闸门，未扫即阻断，不得靠文字约定自觉跳过。按其上云前/后闭环执行「脱敏、处理、回填、复核」：
   1. **上云前**：凡要把任何内容送云端模型，先跑该技能的「输入检测闸门 → 脱敏 → 上云前自查 → 用户确认」。仅可上云的是脱敏副本或 `brief` 紧凑中间产物。
   2. **本地处理豁免**：若 `mode=local` 且声明「仅本地处理·无需外发」，走该技能的「本地处理豁免（三条护栏）」——原始数据留本机、不脱敏、绝不外发。
   3. **任务后**：按该技能模板**自动生成脱敏审计文档并写入文件**（`desensitize_audit.md` / `06_审计与回填/审计记录.md`），原始文件与映射表永远留本地且分离。
@@ -245,8 +253,8 @@ $PY $SKILL_DIR/scripts/skill_bridge.py --exclude summarize --cap desensitization
 - **absent（fallback=local）**：本技能在本工作区创建 `./要点沉淀/YYYYMMDD.md`，写入同样的「摘要 + 要点 + 来源」纯 markdown。**这样即使用户未装任何知识库技能，要点也不会丢失，日后可一键导入 Obsidian / Notion / 语雀等任意知识库**。
 
 **B. 多语摘要 translation**
-- **available**：用 **Skill 工具**加载该翻译技能，对（本地或云端的）摘要做目标语言翻译；可询问用户目标语言。原始长文不上云，仅翻译短摘要。
-- **absent（fallback=tool）**：若用户确实需要多语摘要，仅把 `--brief` 紧凑中间产物或本地短摘要送云端翻译（**原始长文仍留本机**），并提示未做脱敏的隐私风险；若用户不需要翻译，则跳过。
+- **available**：用 **Skill 工具**加载该翻译技能，对（本地或云端的）摘要做目标语言翻译；可询问用户目标语言。原始长文不上云，仅翻译短摘要。**翻译属隐性外发**：送云端翻译前，已装脱敏技能则必先 `scan` 未扫即阻断；未装则跑 `pii_precheck.py` 本地预检 + 显式提醒。
+- **absent（fallback=tool）**：若用户确实需要多语摘要，仅把 `--brief` 紧凑中间产物或本地短摘要送云端翻译（**原始长文仍留本机**），并提示未做脱敏的隐私风险；若用户不需要翻译，则跳过。**外发前同样须 `pii_precheck.py` 预检兜底**，不得裸发。
 
 > 这两条分支与主流程解耦：用户不要求沉淀/翻译时，即使对应技能可用也**不主动触发**，避免副作用。
 
@@ -279,6 +287,7 @@ $PY $SKILL_DIR/scripts/skill_bridge.py --exclude summarize --use-cache --format 
 - **available**：用 **Skill 工具**加载搜索技能做外部补全。
 - **absent（fallback=tool）**：回退内置 `WebSearch` 工具。
 - **无论 available / absent，凡联网补全必须严格按「源文忠实」专节执行三段标记**：【原文】可溯源句 / 段落 ·【联网补全】附来源链接 / 出处 + 获取时间 ·【处理结果】分别依赖了哪些原文与补全；外部内容**不得混入看似原文**。**默认不联网**，仅当原文确实不足以满足本次后续处理需求时才走此分支。
+- **外发前约束（search 属隐性外发）**：搜索 query 若含敏感原文同样外发——送 search 前，已装脱敏技能则必先 `scan`；未装则对 query 做 `pii_precheck.py` 预检，命中敏感项须先脱敏/替换再发，不得把敏感原文直接塞进 query。
 
 **E. 要点可视化 mindmap（含反向导入）**
 - **available**：用 **Skill 工具**加载脑图技能，把「摘要 + 层级要点」渲染为思维导图 / 结构化脑图。
@@ -411,6 +420,7 @@ $PY $SKILL_DIR/scripts/qa_router.py --session state.json --original 原文.txt \
   - `edge` —— `edge-tts`，**免费、无需 API Key**（中文推荐 `zh-CN-XiaoxiaoNeural`）；
   - `openai` —— OpenAI TTS，需 `OPENAI_API_KEY`（或 `--api-key`），模型默认 `tts-1`；
   - `azure` —— Azure 语音服务，需 `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION`（纯标准库联网，无第三方包）。
+- **`--tts` 是最隐蔽的隐性外发（讲稿全文直送第三方 TTS）**：合成前**必须**先过外发门禁——已装脱敏技能则必先 `scan`（未扫即阻断）；未装则先跑 `pii_precheck.py` 对讲稿全文做 PII 预检，命中敏感项须先脱敏/确认再合成，并对话内显式提示「讲稿全文将外发至 <provider>」。**不得未经扫描直接 `--tts` 合成**。
 - 用法与输出：
 ```bash
 $PY $SKILL_DIR/scripts/podcast.py <输入.txt> [-] \

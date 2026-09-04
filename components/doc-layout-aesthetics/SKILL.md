@@ -63,6 +63,7 @@ version: "1.0.0"
 - 网页 / 多终端：移动优先、流式单位(clamp)、触控目标 ≥44px、视口 meta、对比度 WCAG AA。
 - 幻灯片：16:9、字号 ≥18pt、每页一观点、安全区 ≥0.5in。
 - 所有编号 / 目录 / 页码自动化，绝不手填。
+- **腾讯文档云端路径（`tencent-doc`）属外发**：把 Markdown 落到 `docs.qq.com` 前，**必须**先过外发门禁——已装脱敏技能（desensitization-sop 等）则必先 `desen scan`，未扫即阻断；未装则先做本地 PII 预检并显式提示「内容将上云腾讯文档，未经完整脱敏，请自行确认不含敏感信息」，不静默直传。
 
 ## 资源
 
@@ -91,7 +92,7 @@ version: "1.0.0"
   4. **纯 Python reportlab**：仅当上述引擎都缺失时启用，读取 docx 真实页型/页边距与字体配对（思源宋体衬线正文 + 思源黑体无衬线标题）重排，并落实表格跨页保护。
   `<默认环境>/bin/python scripts/build_pdf.py --out <目录>`（默认 auto 探测）；也可 `--engine libreoffice|docx2pdf|wps|reportlab` 强制。
 - `scripts/build_md_pdf.py` — **Markdown → PDF 直转**（不经过 docx），纯 reportlab 渲染，与本技能美学规范一致：思源宋体衬线正文 + 思源黑体无衬线标题、主题深蓝、**正文左对齐**（规避中英混排"河流"效应）、行距 1.5 倍、首行缩进 2 字符、表格深蓝表头 + 斑马纹 + 跨页 repeatRows、短表 KeepTogether。**标题孤行（orphan heading）保护**：标题必须与其后「直到下一标题之前」的全部内容同页，禁止"标题在页底、内容在页首"的割裂。实现要点——**不要依赖 `keepWithNext` 链式传递**（H1/H2 后紧跟的 `HRFlowable` 分隔线会让保护链断裂，实测 `keepWithNext` 对 HRFlowable 无效）；正确做法是由 `build_flowables` 用 while 收集「标题 + 分隔线 + 同章节后续 block」，整段用 `KeepTogether` 包裹。剩余空间不足容纳整段时整段下移；若整段超过一页，reportlab 自动拆分为多页（不会无限溢出），标题始终落在章节起始处而非页底。三平台字体探测（**开源优先**：思源宋体/黑体、Noto CJK、文泉驿，系统字体 Songti/STHeiti/SimSun/SimHei 仅兜底并告警）。支持 Markdown 标题（#~###）、粗斜、行内代码 `` `code` ``、无序/有序/任务列表、代码块（``` 围栏 + 浅灰底，**保留缩进**）、本地相对路径图片（按版心宽度等比缩放、居中）、链接（保留 text 去掉 URL）、**列表项/任务项续行**（2+ 空格缩进挂到上一项）、**段落硬换行**（行尾两空格 / 反斜杠 → `<br/>`）、**多行引用**（`> ` 连续行，行内保留换行 + 左边深蓝竖线 + 浅蓝底 + 灰色字）。**符号安全机制**：列表项目符号 / 任务标记在渲染前用 `TTFont.face.charWidths` 运行时验证字形（首选 `●/√/□`，思源宋体缺失时自动降级到 `·/✓/○` 乃至 ASCII 兜底并告警），杜绝因字体缺字形导致的"无标记"空白。`<默认环境>/bin/python scripts/build_md_pdf.py -i in.md [-o out.pdf] [-t 标题] [--subtitle 副标题] [--author 作者] [--no-cover]`（不指定 `--out` 时输出到输入同目录同名 .pdf）。**两种 PDF 路径的取舍**：先有 Markdown 源、需要快速直转 → `build_md_pdf.py`；已经在做《版面美学观》docx 交付、需要与 Word 页面完全一致 → `build_pdf.py`。
-- `scripts/build_tencent_doc.py` — 腾讯文档云端路径 helper：把 Markdown 落到 `docs.qq.com` 并自动套用美学（标题 思源黑体 + 深蓝 + 加粗、表格边框 + 表头底色 + 斑马纹）。需 `tencent-docs` 插件且宿主已连接腾讯文档。示例：`<默认环境>/bin/python scripts/build_tencent_doc.py scripts/sample_tencent.md --title 版面美学观`。
+- `scripts/build_tencent_doc.py` — 腾讯文档云端路径 helper：把 Markdown 落到 `docs.qq.com` 并自动套用美学（标题 思源黑体 + 深蓝 + 加粗、表格边框 + 表头底色 + 斑马纹）。需 `tencent-docs` 插件且宿主已连接腾讯文档。**上云前必先过外发门禁**（见「关键约束」——已装脱敏技能则 `desen scan` 未扫即阻断，未装则本地 PII 预检 + 显式提醒）。示例：`<默认环境>/bin/python scripts/build_tencent_doc.py scripts/sample_tencent.md --title 版面美学观`。
 - `scripts/sample_tencent.md` — 腾讯文档云端路径的示例输入 Markdown，供 `build_tencent_doc.py` 直接调用。
 - `scripts/upgrade_skill.sh` / `scripts/upgrade_skill.ps1` — **升级脚本**（macOS/Linux + Windows）：从 GitHub 远程仓库拉取最新版并同步到技能副本，副本保持干净（不含 `.git` / 缓存 / 字体二进制）。用法：`bash scripts/upgrade_skill.sh [--target DIR] [--check] [--dry-run]`；Windows `powershell -ExecutionPolicy Bypass -File scripts\upgrade_skill.ps1 [-Check] [-DryRun]`。详见 [`AGENT_INSTALL.md`](./AGENT_INSTALL.md) 第 6 节。
 - `scripts/render_pdf.swift` — **macOS 平台首选**的 PDF 高保真渲染器（PDF → PNG），用于人工视觉核验排版效果。走 PDFKit + CoreGraphics（系统原生渲染管线，与 Preview 一致），规避 sips / qlmanage 对 reportlab 子集化字体缺字形的局限。**仅 macOS**（依赖系统框架 + swift），零第三方包。`swift scripts/render_pdf.swift <input.pdf>`（第 1 页 → 同目录 `.png`）；`-o` 指定输出、`-p` 指定页码、`--all` 渲染全部页、`-s` 缩放倍率。**Linux / Windows 无此工具**——在那些平台做视觉核验请直接打开 PDF 查看。

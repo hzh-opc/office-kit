@@ -20,7 +20,6 @@ desen-stop · Stop Hook：会话结束前"上云/外发已做却无 desen 脱敏
   DESEN_STOP_HOOK_MODE=block  → 命中"有外发无留痕"即阻止停止（exit 2）
   DESEN_STOP_HOOK_MODE=warn   → 命中仅输出警示、允许停止（exit 0，默认）
   DESEN_STOP_HOOK_OFF=1       → 完全跳过本 hook
-  DESEN_STOP_HOOK_NOISE=0     → 命中但属"仅读/仅本地"低危时不提示（默认 1=提示）
 
 纯标准库、离线、零外部依赖；只读不写，绝不外发/落盘敏感原文。
 """
@@ -60,10 +59,9 @@ _DESEN_HINTS = (
     "confirm-raw", "confirm_raw",  # v2.2 用户显式确认原样外发（须先 audit-log，仍属已留痕路径）
     ".desensitize_keys",
 )
-# 本地只读/仅处理类的低危动作（不算外发；可经 _local_only 豁免提示）
-_LOCAL_ONLY_HINTS = (
-    "read_table", "get_cell_ranges",  # 仅本地解析读取也算外发? 否——只读表格(无send)视为查询
-)
+# 本地只读/仅处理类的低危动作（不算外发）。注：这些 token 若出现在 transcript 尾部，
+# 通常已伴随 read_table/resolve_local_excel 等关键词被 _EXTERNAL_HINTS 捕获；此处不再
+# 单独维护豁免清单，避免与 _EXTERNAL_HINTS 双副本漂移。判定统一走「有外发动作即提示」。
 
 
 def _log(msg: str) -> None:
@@ -129,7 +127,6 @@ def main() -> int:
     if os.environ.get("DESEN_STOP_HOOK_OFF") == "1":
         return 0
     mode = os.environ.get("DESEN_STOP_HOOK_MODE", "warn")  # warn|block
-    noise = os.environ.get("DESEN_STOP_HOOK_NOISE", "1") != "0"
 
     tp = cfg.get("transcript_path") or cfg.get("transcript") or ""
     if not tp:
@@ -143,7 +140,6 @@ def main() -> int:
         return 0
     if gated:
         return 0  # 已走 desen，放行
-    # 仅本地只读类命中且未伴随外发动词：低危，noise=0 时跳过
     reason = (
         "本会话检测到疑似上云/外发动作（%s），但未发现 desen 脱敏留痕。"
         "如涉敏数据（发票/申报/表格云解析/邮件/发布/联网），请先本地 "

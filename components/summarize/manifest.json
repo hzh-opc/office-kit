@@ -15,7 +15,7 @@
       "entry": "scripts/summarize.py",
       "fallback": "minimal-stdlib",
       "category": "抽取处理链",
-      "description": "摘要/提炼/关键词（纯本地脚本，零上云；翻译/TTS/联网补全等隐性外发由 SKILL.md 层智能体动作 + podcast.py --tts 等组件内确认闸口负责，不经 kit.py 分发）"
+      "description": "摘要/提炼/关键词（纯本地脚本，零上云；翻译/TTS/联网补全等隐性外发由 SKILL.md 层智能体动作 + podcast.py --tts 组件内 confirm-or-block 确认闸口（OFFICE_KIT_EXTERNAL_CONFIRM=allow|deny，安全默认阻断）负责，不经 kit.py 分发）"
     }
   ]
 }

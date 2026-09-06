@@ -1007,9 +1007,11 @@ def cmd_run(commands, argv):
             return 3
     else:
         py = venv_py
-    # 外发命令门禁（2026-09-04 收口版）：外发登记唯一真相源 = manifest 的 commands[].external 字段；
-    # 隐性外发命中敏感信息 allow=False → 硬阻断（exit 3）；显式外发命中敏感仅提示不阻断；
-    # 逃生口 OFFICE_KIT_SKIP_EXTERNAL_GATE=1。
+    # 外发命令门禁（2026-09-04 收口版，2026-09-06 v2.2 统一外发闸门）：
+    # 外发登记唯一真相源 = manifest 的 commands[].external 字段；
+    # 命中敏感信息 → 一律先阻断（allow=False, exit 3）+ 确认卡，用户显式确认
+    # （--confirm-raw / OFFICE_KIT_CONFIRM_RAW=1）后才放行；确认放行前提示先 audit-log 留痕。
+    # 逃生口 OFFICE_KIT_SKIP_EXTERNAL_GATE=1（跳过全部门禁）。
     if rec.get("external"):
         allow, note = _external_gate(target, rest, rec)
         if note:

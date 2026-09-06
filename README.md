@@ -27,12 +27,12 @@ office-kit/
 ├── config/                   # 本地配置（.env.example 为样例，.env 不入库）
 ├── hooks/                    # 安全钩子（desen-stop：Stop 时扫描外发动作的兜底检测）
 │   └── desen-stop/
-├── skills/                   # 触发壳资产（随仓库分发，可选部署到 ~/.workbuddy/skills/）
+├── skills/                   # 用户级技能资产（office-kit 元技能 + desen-trigger 触发壳，由 bootstrap.sh 强制部署到 ~/.workbuddy/skills/）
 │   └── desen-trigger/        #   跨场景 DESEN 触发壳（非办公场景的敏感/外发闸门入口）
 ├── office-kit.sh             # 统一入口（macOS / Linux）
 ├── office-kit.ps1            # 统一入口（Windows）
 ├── kit.py                    # 动态注册与分发器（扫描 manifest.json，生成"功能记录"）
-├── bootstrap.sh              # 一键初始化（macOS / Linux）：建 venv + 装依赖 + 修复组件
+├── bootstrap.sh              # 一键初始化（macOS / Linux）：建 venv + 装依赖 + 修复组件 + 强制部署技能与常驻闸门
 ├── bootstrap.ps1             # 一键初始化（Windows）
 └── ogit                      # git 包装器（统一入口，已配置免锁）
 ```
@@ -144,8 +144,7 @@ python kit.py feedback --component info-extract \
 把「脱敏 / 上云 / 财务敏感」从办公抽取词里拆出单列，让 desen 可被任意场景独立命中，命中后转发到
 `components/desensitization-sop` 权威实现。
 
-- **可选部署**：把 `skills/desen-trigger/` 整目录 copy 到用户级技能目录 `~/.workbuddy/skills/`
-  （实目录 copy，非 symlink）。不部署不影响套件内门禁；部署后可让非办公场景的敏感动作也能被准确触发。
+- **随 bootstrap.sh 强制部署**：`skills/desen-trigger/` 由 `./bootstrap.sh` 第 5 步**幂等强制**复制到用户级技能目录 `~/.workbuddy/skills/desen-trigger/`（实目录 copy，非 symlink），无需手动操作；重跑脚本即同步仓库最新版，避免版本漂移。它与 `skills/office-kit/` 元技能一并自动安装，构成跨场景 DESEN 常驻闸门：元技能门禁覆盖 office-kit 命令，本触发壳覆盖非办公场景（云端生成 ImageGen/VideoGen、agent-mail/send_mail、表格云解析 sheetagent、联网搜索等），确保敏感动作被准确触发。
 - **权威实现唯一**：始终走 `components/desensitization-sop/`（勿调用旧独立副本）。
 
 ## 组件升级 / 修复（在线）

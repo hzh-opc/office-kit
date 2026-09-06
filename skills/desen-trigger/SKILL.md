@@ -55,4 +55,4 @@ desensitization-sop（desen）并入 office-kit 后失去独立顶层入口，�
 - 逃生口 `OFFICE_KIT_SKIP_EXTERNAL_GATE=1`（跳过全部门禁）与确认放行 `--confirm-raw` / `OFFICE_KIT_CONFIRM_RAW=1`（同意原样外发）仅当用户显式要求时才可用；两者都不可豁免 `desen audit-log` 留痕责任。
 
 ## 部署说明
-本目录为 office-kit 仓库随带的**触发壳资产**，供跨场景 DESEN 闸门复用。安装方式（可选）：将本目录整体 copy 至用户级技能目录 `~/.workbuddy/skills/desen-trigger/`（实目录 copy，非 symlink）。不安装不影响 office-kit 套件内门禁（`kit.py` 已内建外发门禁）；安装后可让"非办公场景"的敏感动作也能被准确触发。
+本目录为 office-kit 仓库内置的**触发壳资产**，是跨场景 DESEN 常驻闸门的一部分。随 `bootstrap.sh` **强制部署**到用户级技能目录 `~/.workbuddy/skills/desen-trigger/`（幂等覆盖、实目录 copy 非 symlink，确保与仓库同源、无版本漂移）。它与 `office-kit` 元技能一并自动安装：元技能门禁覆盖 office-kit 命令，本触发壳覆盖非办公场景（云端生成 ImageGen/VideoGen、agent-mail/send_mail、表格云解析 sheetagent、联网搜索等），二者共同确保敏感动作被准确触发。`desen-stop` Stop Hook 同期部署到 `~/.workbuddy/hooks/desen-stop/` 作会话结束兜底。

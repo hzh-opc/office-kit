@@ -6,14 +6,19 @@
 #   2) 修复/补齐组件（缺失/损坏时在线下载，复用 kit.py repair；与 kit.py check/upgrade 同一套远程源设计）
 #   3) 合并各组件 requirements.txt 并安装全部依赖
 #   4) 校验组件 + 补齐 workbench 阶段子目录
-#   5) 部署用户级技能与常驻 DESEN 闸门（office-kit 元技能 + desen-trigger 触发壳 → ~/.workbuddy/skills/；desen-stop Stop Hook → ~/.workbuddy/hooks/，幂等强制）
+#   5) 部署用户级技能与 DESEN 触发资产：
+#        - office-kit 元技能 + desen-trigger 触发壳 → ~/.workbuddy/skills/（强制、幂等，
+#          skills/ 为平台技能加载根，部署即被识别生效）
+#        - desen-stop Stop Hook 插件包 → ~/.workbuddy/hooks/（强制分发文件，但【文件就位 ≠ 平台生效】，
+#          须经插件管理页把该本地插件包导入/启用、注册进 enabledPlugins 后才随会话停止执行）
 #
 # 前置：已安装 uv（https://docs.astral.sh/uv/）。脚本依赖 uv 管理 .venv 与依赖。
 # 用法：
 #   ./bootstrap.sh            # 常规初始化（.venv 已存在则跳过创建）
 #   ./bootstrap.sh --force-venv   # 强制删除并重建 .venv
 #
-# 注意：本脚本动 .venv / 组件目录 / 用户级 ~/.workbuddy/skills（office-kit 元技能 + desen-trigger 触发壳）与 ~/.workbuddy/hooks（desen-stop 常驻闸门），不会触碰 .git 或 workbench 内产物。
+# 注意：本脚本动 .venv / 组件目录 / 用户级 ~/.workbuddy/skills（office-kit 元技能 + desen-trigger 触发壳）
+#       与 ~/.workbuddy/hooks（desen-stop 插件包，仅分发，生效需另导入），不会触碰 .git 或 workbench 内产物。
 set -euo pipefail
 
 KIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -130,18 +135,24 @@ else
   echo "      ⚠ 仓库缺失 skills/desen-trigger，跳过" >&2
 fi
 
-# 5c. 常驻闸门：desen-stop Stop Hook（会话结束兜底拦截「无脱敏留痕的外发」）
+# 5c. desen-stop Stop Hook 插件包（会话结束兜底拦截「无脱敏留痕的外发」）
+#     ⚠ 语义说明：desen-stop 是标准 Hook 插件包（.codebuddy-plugin/plugin.json 契约）。
+#     平台只在插件被「导入/启用」并注册进 enabledPlugins 后才加载其 Stop hook；
+#     单纯把目录复制到 ~/.workbuddy/hooks/ 只完成文件分发，并不保证被平台自动执行。
+#     故本步=分发最新插件包供手动导入，并在结尾给出明确启用指引。
 if [ -d "$KIT_DIR/hooks/desen-stop" ]; then
   rm -rf "$HOOKS_DIR/desen-stop"
   cp -R "$KIT_DIR/hooks/desen-stop" "$HOOKS_DIR/"
-  echo "      ✓ 已部署常驻闸门: desen-stop Stop Hook -> $HOOKS_DIR/desen-stop/"
-  echo "        提示：若平台需手动启用插件，请在插件/钩子管理页激活 desen-stop（默认 warn 仅提示；"
-  echo "              设 DESEN_STOP_HOOK_MODE=block 可升级为命中即阻断）。"
+  echo "      ✓ 已分发 desen-stop 插件包 -> $HOOKS_DIR/desen-stop/（文件已就位，供导入启用）"
+  echo "        ⚠ 文件就位 ≠ 平台生效：请到插件管理页把该本地插件包【导入/启用】，
+        （注册进 enabledPlugins 后 Stop hook 才会随会话停止执行；默认 warn 仅提示，
+        设 DESEN_STOP_HOOK_MODE=block 可升级为命中即阻断）。"
 else
   echo "      ⚠ 仓库缺失 hooks/desen-stop，跳过" >&2
 fi
-echo "      （技能与闸门均为幂等覆盖：重跑 bootstrap.sh 即同步仓库最新版，避免版本漂移）"
+echo "      （技能为幂等覆盖、重跑即同步仓库最新版；desen-stop 仅分发文件，启用状态以插件管理页为准）"
 
 echo ">>> 初始化完成。"
 echo "    运行 ./office-kit.sh --help 试用各组件；检查组件完整性/升级：./office-kit.sh check"
-echo "    已强制部署技能(office-kit/desen-trigger)与常驻闸门(desen-stop)到 ~/.workbuddy/，确保 DESEN 触发有效。"
+echo "    已强制部署技能 office-kit/desen-trigger 到 ~/.workbuddy/skills/（部署即生效）；"
+echo "    desen-stop 插件包已分发到 ~/.workbuddy/hooks/desen-stop/，请到插件管理页【导入/启用】后才生效。"

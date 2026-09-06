@@ -24,7 +24,9 @@ desen-stop/
 | `DESEN_STOP_HOOK_MODE` | `warn`（默认） | 命中仅输出 JSON 提示，允许停止（exit 0） |
 | `DESEN_STOP_HOOK_MODE` | `block` | 命中输出 `shouldStop:false` + 阻止停止（exit 2，reason 传 Agent） |
 | `DESEN_STOP_HOOK_OFF` | `1` | 完全跳过本 hook |
-| `DESEN_STOP_HOOK_NOISE` | `0` | 关闭低危提示（默认 1=开） |
+
+> 注：旧版曾支持 `DESEN_STOP_HOOK_NOISE`（低危提示开关），其对应脚本内变量属死代码、已于 2026-09-06
+> 死代码清理时删除——现在行为统一为「有外发动作即提示」，不再区分低危/高危提示档。
 
 ## 本机自测（已验证通过）
 ```bash
@@ -57,7 +59,7 @@ echo '{"transcript_path":"/tmp/含sheetagent无desen.txt"}' | DESEN_STOP_HOOK_MO
 
 ## 风险与注意
 - **误报**：关键词近似检测（如 `read_table`）可能对"仅本地只读未外发"也提示；可用
-  `DESEN_STOP_HOOK_NOISE=0` / `OFF=1` 收敛，或按实际动作收紧脚本内 `_EXTERNAL_HINTS`。
+  `DESEN_STOP_HOOK_OFF=1` 整体跳过，或按实际动作收紧脚本内 `_EXTERNAL_HINTS`。
 - **安全**：脚本仅读 transcript 尾部 ≤2MB，不写盘、不联网、不外发，符合"只读审计"定位。
 - **逃生口**：`DESEN_STOP_HOOK_OFF=1` 完全跳过（对齐 security-scan Skip 档）。
 - **数据佐证**：sheetagent MCP env 含 `SHEET_REMOTE_MCP_URL=https://docs.qq.com/api/v6/sheet/mcp`

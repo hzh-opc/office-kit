@@ -48,6 +48,12 @@ echo '{"transcript_path":"/tmp/含sheetagent无desen.txt"}' | DESEN_STOP_HOOK_MO
 3. **全局/项目级用户 hooks**：若你的 WorkBuddy 版本暴露用户级 hooks 配置入口（`~/.workbuddy/` 下或 settings），
    将该 Stop 片段并入即可跨项目生效。
 
+> **完整操作指引**（前置自检 → GUI 导入 → enabledPlugins/installed_plugins.json 验证锚点 → 行为验证 →
+> 排查 → 一键自检片段）：见同目录 **`平台启用指引.md`**。它回答「文件已分发到
+> `~/.workbuddy/hooks/desen-stop/` 但平台还没加载」时应怎么做，含为什么不能靠改
+> `enabledPlugins` 强启（平台运行时维护、破坏有风险）。新机器 `bootstrap.sh` 5c 分发后，
+> 对指引第 2 步操作即可真正生效。
+
 ## 落地状态
 - ✅ 脚本 + hooks.json + plugin.json + 自测完成（warn 默认）。
 - ✅ 已选 **warn 模式**（用户 2026-09-04 拍板），非阻断，仅会话结束提示。

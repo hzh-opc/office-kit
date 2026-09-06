@@ -353,9 +353,82 @@ def detect(caps, skills):
 
 
 # ---------------------------------------------------------------------------
-# 隐性外发确认闸口（2026-09-04 政策细化：扫描→提示→确认→否则阻断）
+# 隐性外发确认闸口（2026-09-04 政策细化；2026-09-06 v2.3 统一门禁：接入真实 desen scan）
 # ---------------------------------------------------------------------------
 EXTERNAL_CONFIRM_ENV = "OFFICE_KIT_EXTERNAL_CONFIRM"
+# 与 kit.py 门禁对齐的「同意原样外发」确认标志（两套机制统一到同一语义）。
+CONFIRM_RAW_ENV = "OFFICE_KIT_CONFIRM_RAW"
+
+
+def _locate_desen_scan():
+    """定位 office-kit 的 desen 组件脚本（components/desensitization-sop/scripts/desensitize.py）。
+    返回 (脚本路径, 解释器路径) 元组，找不到返回 (None, None)（此时退化为本地 PII 预检）。"""
+    root = os.environ.get("OFFICE_KIT_ROOT")
+    candidates = []
+    if root:
+        candidates.append(os.path.join(root, "components", "desensitization-sop",
+                                        "scripts", "desensitize.py"))
+    # 本文件位于 components/summarize/scripts/，向上 4 层即仓库根。
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(os.path.abspath(os.path.join(
+        here, "..", "..", "desensitization-sop", "scripts", "desensitize.py")))
+    desen_script = next((c for c in candidates if c and os.path.isfile(c)), None)
+    if not desen_script:
+        return None, None
+    # 解释器：desen 依赖 cryptography 等，须用 kit 的 .venv 解释器（非系统 python）。
+    kit_root = root or os.path.abspath(os.path.join(here, "..", "..", ".."))
+    if os.name == "nt":
+        venv_py = os.path.join(kit_root, ".venv", "Scripts", "python.exe")
+    else:
+        venv_py = os.path.join(kit_root, ".venv", "bin", "python")
+    if not os.path.isfile(venv_py):
+        # 无 venv 时退化为当前解释器（可能因缺依赖而 scan 失败，调用方会 fail-safe 处理）。
+        venv_py = os.environ.get("OFFICE_KIT_PYTHON") or sys.executable
+    return desen_script, venv_py
+
+
+def _run_desen_scan_text(text):
+    """用 office-kit 的 desen scan 扫描待外发文本，返回 (passed: bool|None, output: str)。
+    passed=None 表示无法判定（desen 组件缺失 / scan 异常），由调用方退化为本地 PII 预检。"""
+    import subprocess as _sp
+    import tempfile as _tf
+    desen_script, py = _locate_desen_scan()
+    if not desen_script:
+        return None, ""
+    if not text or not text.strip():
+        return True, ""
+    try:
+        with _tf.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".txt",
+                                    prefix="office_kit_bridge_scan_", delete=False) as tf:
+            tf.write(text)
+            tmp = tf.name
+    except Exception:
+        return None, ""
+    env = dict(os.environ)
+    if os.path.isdir(os.path.dirname(py)):
+        env["UV_PROJECT_ENVIRONMENT"] = os.path.dirname(py)
+    try:
+        proc = _sp.run([py, desen_script, "scan", tmp], env=env,
+                       capture_output=True, text=True, timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+        return None, "desen scan 调用失败：%s" % exc
+    try:
+        os.unlink(tmp)
+    except Exception:
+        pass
+    out = (proc.stdout or "").strip() + ("\n" + (proc.stderr or "").strip()
+                                         if proc.stderr and proc.stderr.strip() else "")
+    # 与 kit.py _run_desen_scan 同语义：命中敏感会出现「汇总：」，干净出现
+    # 「未发现已知敏感标识符」，两者皆无按 fail-safe 保守判定为「扫描异常」。
+    if "未发现已知敏感标识符" in out:
+        return True, out
+    if "汇总：" in out:
+        return False, out
+    return None, out or "（desen scan 无有效输出）"
 
 
 def _merge_stats(a, b):
@@ -382,45 +455,63 @@ def _local_pii_hits(texts):
 
 
 def request_external_confirmation(purpose, texts=None, paths=None, pii_hits=None):
-    """隐性外发确认闸口（组件内部，confirm-or-block，安全默认=阻断）。
+    """隐性外发确认闸口（组件内部，confirm-or-block，安全默认=阻断；v2.3 接入真实 desen scan）。
 
     在组件把内容送出本机（如 podcast TTS 把讲稿全文送第三方语音合成）前调用。
     返回 True=放行 / False=阻断。
 
-    确认逻辑：
-    - OFFICE_KIT_EXTERNAL_CONFIRM=allow → 放行（agent 已在对话中代用户确认）。
-    - =deny → 阻断（显式拒绝）。
-    - 未设 且 sys.stdin 是 TTY → 交互 input() 提示 y/N。
-    - 未设 且 非 TTY（agent / 管道调用）→ 安全默认阻断，打印提示，等 agent 代确认。
+    v2.3 统一门禁逻辑（与 kit.py 门禁对齐）：
+    1. 先跑真实 desen scan（office-kit desensitization-sop）扫描待外发文本；
+       找不到 desen 组件时退化为本技能自带 pii_precheck 本地预检（仅提示增强）。
+    2. 命中敏感 → 提示「先阻断 + 敏感确认卡」，须用户显式确认
+       （OFFICE_KIT_CONFIRM_RAW=1，与 kit.py --confirm-raw 同语义；保留
+       OFFICE_KIT_EXTERNAL_CONFIRM=allow 作为等价别名）才放行，并提示先
+       `desen audit-log --decision raw` 留痕；或选脱敏外发（desen run 副本）。
+    3. 无敏感 → 静默放行（零打扰）。
+    4. 交互 TTY 下用 input() 让用户 y/N 确认；非 TTY（agent/管道）安全默认阻断。
 
-    注：PII 检测仅用于提示增强，不影响阻断决策——任何隐性外发都需用户确认。
+    注：PII/desen 检测仅用于提示增强，不影响阻断决策——任何隐性外发都需用户确认。
     """
     import sys as _sys
-    # 1) 本地 PII 预检（仅提示）
-    hits = dict(pii_hits or {})
-    if not hits:
-        hits = _local_pii_hits(texts)
-        if not hits and paths:
-            try:
-                for p in paths:
-                    if p and os.path.isfile(p):
-                        with open(p, "r", encoding="utf-8", errors="replace") as f:
-                            hits = _merge_stats(hits, _local_pii_hits([f.read()]))
-            except Exception:
-                pass
-    # 2) 提示
-    _sys.stderr.write("\n⚠ 隐性外发确认：%s\n" % purpose)
-    if hits:
-        kinds = "、".join("%s×%d" % (k, v) for k, v in sorted(hits.items()))
-        _sys.stderr.write("  本地预检检出疑似敏感信息：%s（建议先 `desen run` 脱敏）\n" % kinds)
+    # 1) 真实 desen scan（优先）；失败/缺失退化为本地 PII 预检
+    scan_passed, scan_out = None, ""
+    if texts:
+        scan_passed, scan_out = _run_desen_scan_text("\n".join(t for t in texts if t))
+    if scan_passed is not None:
+        # desen scan 已跑：命中敏感 → 阻断并给确认卡；干净 → 放行
+        _sys.stderr.write("\n⚠ 隐性外发确认：%s\n" % purpose)
+        if scan_passed:
+            _sys.stderr.write("  desen scan：未发现已知敏感标识符。\n")
+        else:
+            _sys.stderr.write("  desen scan 命中敏感信息，已按门禁先阻断：\n%s\n" % scan_out)
     else:
-        _sys.stderr.write("  本地预检未发现已知 PII（仍请确认内容不含敏感信息）。\n")
-    # 3) 确认
-    decision = os.environ.get(EXTERNAL_CONFIRM_ENV, "").strip().lower()
-    if decision == "allow":
-        _sys.stderr.write("  → 已确认（OFFICE_KIT_EXTERNAL_CONFIRM=allow），放行。\n")
+        # 退化：本地 PII 预检（仅提示）
+        hits = dict(pii_hits or {})
+        if not hits:
+            hits = _local_pii_hits(texts)
+            if not hits and paths:
+                try:
+                    for p in paths:
+                        if p and os.path.isfile(p):
+                            with open(p, "r", encoding="utf-8", errors="replace") as f:
+                                hits = _merge_stats(hits, _local_pii_hits([f.read()]))
+                except Exception:
+                    pass
+        _sys.stderr.write("\n⚠ 隐性外发确认：%s\n" % purpose)
+        if hits:
+            kinds = "、".join("%s×%d" % (k, v) for k, v in sorted(hits.items()))
+            _sys.stderr.write("  本地预检检出疑似敏感信息：%s（建议先 `desen run` 脱敏）\n" % kinds)
+        else:
+            _sys.stderr.write("  本地预检未发现已知 PII（仍请确认内容不含敏感信息）。\n")
+    # 2) 确认（与 kit.py 对齐：CONFIRM_RAW 优先，EXTERNAL_CONFIRM 作等价别名）
+    confirm = os.environ.get(CONFIRM_RAW_ENV, "").strip().lower()
+    if confirm not in ("1", "true", "yes", "allow"):
+        confirm = os.environ.get(EXTERNAL_CONFIRM_ENV, "").strip().lower()
+    if confirm in ("1", "true", "yes", "allow"):
+        _sys.stderr.write("  → 已确认（OFFICE_KIT_CONFIRM_RAW / OFFICE_KIT_EXTERNAL_CONFIRM），放行。\n"
+                          "  【留痕】请先执行 `kit.py desen audit-log --decision raw` 记录本次原样外发。\n")
         return True
-    if decision == "deny":
+    if confirm == "deny":
         _sys.stderr.write("  → 已显式拒绝，外发阻断。\n")
         return False
     if _sys.stdin.isatty():
@@ -433,7 +524,7 @@ def request_external_confirmation(purpose, texts=None, paths=None, pii_hits=None
         _sys.stderr.write("  → 用户未确认，外发阻断。\n")
         return False
     _sys.stderr.write("  → 非交互环境未获确认，按安全默认阻断（已与用户确认请置 "
-                      "OFFICE_KIT_EXTERNAL_CONFIRM=allow 后重试）。\n")
+                      "OFFICE_KIT_CONFIRM_RAW=1 后重试）。\n")
     return False
 
 

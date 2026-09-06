@@ -34,7 +34,7 @@ desensitization-sop（desen）并入 office-kit 后失去独立顶层入口，�
   `kit.py desen run <文件/目录> --out workbench/desen/`（= 03_脱敏副本/），映射表留本地 `04_映射表_保密/`；用脱敏副本执行外发，并留痕：
   `kit.py desen audit-log --target "<...>" --decision desen --copy <副本路径> --mapping <映射表路径>`（另可 `desen audit` 出九节审计文档）。
 - **未命中 → 直接执行，零额外负担。**
-- kit.py 外发门禁（2026-09-06 v2.2）已内置此流程：**所有外发（显式/隐性、高/中/低档）命中敏感一律「先阻断 + 确认卡」**，用户显式确认（`--confirm-raw` 或 `OFFICE_KIT_CONFIRM_RAW=1`）后才放行；确认放行前强制提示 `desen audit-log --decision raw` 留痕。本壳负责 kit 治理面之外的通道（云端生成/邮件/手动分享），动作一致：检测最终载荷→预览卡→用户同意原样(留痕)/脱敏外发(留痕)。
+- kit.py 外发门禁（2026-09-06 v2.2）已内置此流程：**所有外发（显式/隐性、高/中/低档）命中敏感一律「先阻断 + 确认卡」**，用户显式确认（`--confirm-raw` 或 `OFFICE_KIT_CONFIRM_RAW=1`）后才放行；确认放行前强制提示 `desen audit-log --decision raw` 留痕。本壳负责 kit 治理面之外的通道（云端生成/邮件/手动分享），动作一致：检测最终载荷→预览卡→用户同意原样(留痕)/脱敏外发(留痕)。**组件内隐性外发（如 summarize 的 `podcast.py --tts` 讲稿送第三方 TTS）v2.3 起同样接入真实 desen scan**：`skill_bridge.request_external_confirmation` 先跑 desen scan，命中敏感先阻断，须 `OFFICE_KIT_CONFIRM_RAW=1`（与 kit.py `--confirm-raw` 同语义）确认后才放行，两套确认机制已统一。
 - **密级/内部标记（desen v2.11.1 拆两类识别）**：
   - **`state_secret`（法定国家秘密等级：机密/绝密/秘密）**——命中即触发**显式确认提醒**（desen scan/run 会在 stderr 红字提示「一般企业/单位依法接触不到国家秘密载体，请确认来源合法性与载体性质」）。**Agent 收到该提示后必须 AskUserQuestion 向用户显式确认**，不得静默把涉密标记当普通字段脱敏放行上云。确认属国家秘密载体 → 严禁上云/联网，按保密规定线下处置；确认仅是内部文件误用机密字眼 → 按内部资料处理。
   - **`internal_mark`（企业内部标签：内部资料/内部文件/内参）**——非国家秘密，正常脱敏为 `[内部]`，不触发国家秘密确认。

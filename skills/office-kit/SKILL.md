@@ -106,7 +106,7 @@ $KIT/office-kit.sh tencent-doc 文章.md --title "标题"          # Markdown→
 **凡外发信息必先 `desen scan`，未扫即阻断。** 本铁律适用于一切把信息送出本机的动作，包括显式外发与隐性外发。**2026-09-06 v2.2 统一外发闸门：外发登记唯一真相源 = 各组件 manifest.json 的 `commands[].external` 字段（`external_kind` 区分显式/隐性）；无论显式/隐性外发，命中敏感信息 → 一律先阻断（exit 3）并向用户展示「敏感信息确认卡」，用户显式确认（`--confirm-raw` / 环境变量 `OFFICE_KIT_CONFIRM_RAW=1`）后才放行；确认前须先 `desen audit-log --decision raw` 留痕（或选脱敏外发走 `desen run` + `desen audit-log --decision desen` 完成「脱敏→映射→回填→复核」全链路追溯）。高/涉密不再「一刀切硬阻断不可降级」——一般企业/单位不接触国家秘密，可经确认卡留痕后外发；stdin/URL 输入同样纳入扫描。**
 
 - **显式外发**（`external_kind=explicit`，用户主动、明显上云意图，如 `tencent-doc` Markdown→腾讯文档云端）：命中敏感 → 先阻断 + 确认卡（告知"你的主动上云动作，信息安全由你与平台负责"），用户确认后放行。
-- **隐性外发**（`external_kind=implicit`，非用户明显意图的上云/联网，如 `extract` 识别稿外发）：命中敏感 → 先阻断 + 确认卡（强调"非你明显意图"），用户确认后放行。`summarize` 脚本本身为纯本地（零上云），已不登记为外发——其翻译/TTS/联网补全等隐性外发是 SKILL.md 层智能体动作，由 `podcast.py --tts` 等组件内 confirm-or-block 确认闸口负责。
+- **隐性外发**（`external_kind=implicit`，非用户明显意图的上云/联网，如 `extract` 识别稿外发）：命中敏感 → 先阻断 + 确认卡（强调"非你明显意图"），用户确认后放行。`summarize` 脚本本身为纯本地（零上云），已不登记为外发——其翻译/TTS/联网补全等隐性外发是 SKILL.md 层智能体动作，由 `podcast.py --tts` 等组件内统一确认闸口负责（v2.3 起接入真实 desen scan，命中敏感先阻断，须 `OFFICE_KIT_CONFIRM_RAW=1` 确认后才放行，与 kit.py `--confirm-raw` 同语义）。
 - **跨场景常驻闸门**：元技能门禁仅覆盖 office-kit 命令；非办公场景（云端生成 ImageGen/VideoGen prompt 送云、agent-mail/send_mail、表格云解析 sheetagent、联网搜索等）由用户级 `desen-trigger` 触发壳 + `desen-stop` Stop Hook（会话结束兜底）覆盖，二者随 `bootstrap.sh` 强制部署到 `~/.workbuddy/skills/` 与 `~/.workbuddy/hooks/`，确保功能触发有效性。
 - **逃生口**：环境变量 `OFFICE_KIT_SKIP_EXTERNAL_GATE=1` 显式跳过全部门禁（等价 security-scan Skip 档，风险自负）；`desen-stop` 钩子默认 warn（仅提示），设 `DESEN_STOP_HOOK_MODE=block` 可升级为命中即阻断。
 

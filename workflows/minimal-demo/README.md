@@ -30,7 +30,7 @@ python kit.py workflow run minimal-demo --resume  --yes --workspace /tmp/d   # �
 python kit.py workflow run minimal-demo --step 3  --yes --workspace /tmp/d   # 单步
 ```
 
-## 真实工作流如何接入（对照 `视频内容交付工作流`）
+## 真实工作流如何接入（对照 `视频转内容包工作流`）
 
 本示例的每一步 `uses` 改成指向真实组件能力即可，runner 不变：
 

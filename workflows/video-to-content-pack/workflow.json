@@ -1,13 +1,14 @@
 {
-  "workflow": "video-content-delivery",
+  "workflow": "video-to-content-pack",
   "version": "0.1.0",
-  "title": "视频内容交付工作流",
+  "title": "视频转内容包工作流",
   "description": "视频内容（录屏/直播/自媒体/采集设备）→ 修正版逐字稿 + 交付文档（多形态） + 去边截图 + 多粒度切片视频 + 检索清单 + 文案。编排 office-kit(info-extract) 与 media 双环境；创作类步骤由 Agent 按蓝本执行，runner 记录状态与确认门。",
-  "blueprint_doc": "人类可读蓝本：工作区 ~/WorkBuddy/Skill-Dev/office-kit/视频内容交付工作流.md（唯一权威副本，隐私隔离，不随本仓库分发；各步骤章节引用见 state_schema 与各步 desc）",
+  "blueprint_doc": "人类可读蓝本：工作区 ~/WorkBuddy/Skill-Dev/office-kit/规划文档/视频转内容包工作流.md（唯一权威副本，隐私隔离，不随本仓库分发；各步骤章节引用见 state_schema 与各步 desc）",
 
   "trigger": {
     "intent_keywords": [
-      "视频内容交付", "视频转交付文档", "视频转讲义", "直播转写交付", "直播回放转讲义",
+      "视频转内容包", "视频转文档", "视频转讲义", "视频转逐字稿", "视频内容包", "内容包交付",
+      "视频内容交付", "视频转交付文档", "直播转写交付", "直播回放转讲义",
       "按产品切片视频", "视频切片", "课程交付", "逐字稿交付", "录屏转文档",
       "视频剪辑交付", "切片视频加文案"
     ],

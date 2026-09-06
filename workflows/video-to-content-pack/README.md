@@ -1,7 +1,7 @@
-# video-content-delivery —— 视频内容交付工作流（契约）
+# video-to-content-pack —— 视频转内容包工作流（契约）
 
 可执行契约：`workflow.json`（由 `kit.py workflow` 加载）。
-人类可读蓝本：**不在本仓库**——位于用户工作区 `~/WorkBuddy/Skill-Dev/office-kit/视频内容交付工作流.md`（唯一权威副本，隐私隔离，不随仓库分发；同 `DEVELOPMENT.md` 先例）。
+人类可读蓝本：**不在本仓库**——位于用户工作区 `~/WorkBuddy/Skill-Dev/office-kit/规划文档/视频转内容包工作流.md`（唯一权威副本，隐私隔离，不随仓库分发；同 `DEVELOPMENT.md` 先例）。
 
 ## 契约速查
 
@@ -41,12 +41,12 @@
 ```sh
 ./kit workflow list
 # 干跑（验证契约与 when 门控）
-./kit workflow run video-content-delivery --dry-run --workspace /tmp/vcd
+./kit workflow run video-to-content-pack --dry-run --workspace /tmp/vcd
 # 单节交付（文件来源，默认粒度 none）
-./kit workflow run video-content-delivery --yes \
+./kit workflow run video-to-content-pack --yes \
   --workspace ~/内容工作区 --param source=file --param source_uri=~/录屏.mp4 --param section=第1节
 # 电商场景（按产品切片 + 文案）
-./kit workflow run video-content-delivery --yes \
+./kit workflow run video-to-content-pack --yes \
   --workspace ~/内容工作区 --param source=online --param source_uri=<回放URL> \
   --param granularity=product --param copywriting=on
 ```

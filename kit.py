@@ -787,17 +787,104 @@ def _read_stdin():
         return None
 
 
+def _scan_risk_tier(out):
+    """从 desen scan 输出解析风险档。命中时 cmd_scan 经 _assess_risk 打印
+    '[分级初判] 按命中类型自动判定风险档：高/中——...'（stderr，已并入 out）。"""
+    if not out:
+        return None
+    if "风险档：高" in out:
+        return "高"
+    if "风险档：中" in out:
+        return "中"
+    return None
+
+
+def _scan_hits(out):
+    """从 desen scan 输出提取『汇总：{...}』命中摘要，供确认卡展示。"""
+    if not out:
+        return ""
+    m = re.search(r"汇总：\s*(\{.*\})", out)
+    if not m:
+        return ""
+    try:
+        d = json.loads(m.group(1))
+        return "，".join("%s×%d" % (k, v) for k, v in d.items())
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _confirm_raw(rest):
+    """用户是否已显式确认「无需脱敏、原样外发」。
+
+    两种确认方式（任一即视为已确认）：
+    - 命令行参数 `--confirm-raw`（在 rest 中出现）；
+    - 环境变量 `OFFICE_KIT_CONFIRM_RAW=1`。
+    确认仅表示「用户已知情并同意原样外发」，不豁免 desen 留痕（仍应 audit-log）。
+    """
+    if os.environ.get("OFFICE_KIT_CONFIRM_RAW") == "1":
+        return True
+    return "--confirm-raw" in rest
+
+
+def _fmt_explicit_note(target, desc, tier, hits, out):
+    t = tier or "中"
+    return (
+        "⚠ 显式外发·敏感信息确认卡：「%s」(%s) 待发内容命中敏感（风险档：%s；命中：%s）。\n"
+        "  已按门禁**先阻断**（本次未发送）。这是你的主动上云动作，信息安全由你与平台负责。\n"
+        "  如确认含敏内容可原样送出（风险自负），请走「确认→留痕→放行」三步：\n"
+        "    ① 留痕：kit.py desen audit-log --target \"%s\" --decision raw --risk %s --hits '%s'\n"
+        "    ② 确认：加 `--confirm-raw`（或设 OFFICE_KIT_CONFIRM_RAW=1）重新执行本命令\n"
+        "  如选择脱敏外发 → 先 `desen run <文档> --out workbench/desen/` 生成脱敏副本再发。\n"
+        "  扫描详情：\n%s" % (target, desc or "主动上云", t, hits or "见详情", target, t, hits, out or "（无输出）")
+    )
+
+
+def _fmt_implicit_high(target, desc, tier, hits, out):
+    """高敏隐性外发：先阻断 + 高敏确认卡；经用户确认留痕后可外发。
+
+    设计依据：一般企业/单位不接触国家秘密，原「高敏一律硬阻断不可降级」过严；
+    改为与中敏一致的「确认→留痕→放行」模式，但高敏强调「先阻断、显式确认」，
+    不静默放行——把生杀权交回用户，同时保留外发审计可追溯。
+    """
+    return (
+        "⚠ 隐性外发·高敏感确认卡：「%s」(%s) 产物含高敏感/涉密信息（风险档：%s；命中：%s）。\n"
+        "  已按门禁**先阻断**（本次未发送）。如你确认该内容可外发（风险自负），请走「确认→留痕→放行」三步：\n"
+        "    ① 留痕：kit.py desen audit-log --target \"%s\" --decision raw --risk 高 --hits '%s'\n"
+        "    ② 确认：加 `--confirm-raw`（或设 OFFICE_KIT_CONFIRM_RAW=1）\n"
+        "    ③ 放行：带确认标志重新执行本命令\n"
+        "  如选择脱敏外发 → 先 `desen run <文档> --out workbench/desen/` 出脱敏副本，用脱敏副本重试。\n"
+        "  扫描详情：\n%s" % (target, desc or "识别稿外发", tier or "高", hits or "见详情", target, hits or "见详情", out or "（无输出）")
+    )
+
+
+def _fmt_implicit_consent(target, desc, tier, hits, out):
+    t = tier or "中"
+    return (
+        "⚠ 隐性外发·敏感信息确认卡：「%s」(%s) 产物含敏感（风险档：%s；命中：%s）。\n"
+        "  已按门禁**先阻断**（本次未发送）。确认原样外发（风险自负）请走「确认→留痕→放行」三步：\n"
+        "    ① 留痕：kit.py desen audit-log --target \"%s\" --decision raw --risk %s --hits '%s'\n"
+        "    ② 确认：加 `--confirm-raw`（或设 OFFICE_KIT_CONFIRM_RAW=1）\n"
+        "    ③ 放行：带确认标志重新执行本命令\n"
+        "  如选择脱敏外发 → 先 `desen run <文档> --out workbench/desen/` 出脱敏副本再重试。\n"
+        "  扫描详情：\n%s" % (target, desc or "识别稿外发", t, hits or "见详情", target, t, hits, out or "（无输出）")
+    )
+
+
 def _external_gate(target, rest, rec=None):
     """外发命令门禁（2026-09-04 收口版：外发登记单一真相源=manifest，支持 stdin/URL 扫描）。
 
-    政策要点（external_kind 区分两类）：
+    政策要点（external_kind 区分两类；v2.2 统一「默认阻断 + 显式确认放行」）：
     - 显式外发（external_kind=explicit，如 tencent-doc 上传腾讯文档云端）：用户主动发起、
-      明显上云/分享意图。不主动脱敏；但放行前做一次 desen scan，命中敏感则**提示**（不阻断），
-      供用户确认，避免误发敏感信息。
+      明显上云/分享意图。不主动脱敏；但放行前做一次 desen scan，命中敏感则**先阻断 + 确认卡**
+      （allow=False），须用户显式确认（`--confirm-raw` 或 `OFFICE_KIT_CONFIRM_RAW=1`）后才放行，
+      避免误发敏感信息。确认放行前强制提示先 `desen audit-log --decision raw` 留痕。
     - 隐性外发（external_kind=implicit，如 extract 识别稿外发、summarize 输入含敏感信息）：
-      非用户明显意图的上云/联网。**DESEN 已装且命中敏感信息 → 硬阻断（allow=False）**，
-      须先 `desen run` 出脱敏副本再重试；DESEN 未装 → 按 SOUL.md 既定原则显式提醒、不阻断
-      （无工具可强制，阻断只会卡死任务）；扫描异常按 fail-safe 保守阻断。
+      非用户明显意图的上云/联网。DESEN 已装且命中敏感信息 → **统一先阻断 + 确认卡**，
+      须用户显式确认（`--confirm-raw` 或 `OFFICE_KIT_CONFIRM_RAW=1`）后才放行；确认放行前
+      强制提示先 `desen audit-log --decision raw` 留痕。高/中/低档均不再静默放行，
+      区别仅在确认卡措辞（高敏强调风险、中低敏提示即可）。
+      DESEN 未装 → 按 SOUL.md 既定原则显式提醒、不阻断（无工具可强制，阻断只会卡死任务）；
+      扫描异常按 fail-safe 保守阻断。
     - 逃生口：环境变量 `OFFICE_KIT_SKIP_EXTERNAL_GATE=1` 显式跳过全部门禁（与
       security-scan 的 Skip 档一致）。
 
@@ -857,19 +944,22 @@ def _external_gate(target, rest, rec=None):
         return True, ""
     if passed:
         return True, ""  # 扫描通过、无敏感：静默放行，不打扰
+    # ---- 命中敏感：进入 v2.2 统一外发闸门（默认阻断 + 用户显式确认后才放行）----
+    tier = _scan_risk_tier(out)
+    hits = _scan_hits(out)
+    # 用户显式确认「无需脱敏、原样外发」→ 放行（但仍提示先 audit-log 留痕）。
+    if _confirm_raw(rest):
+        if is_explicit:
+            return True, _fmt_explicit_note(target, desc, tier, hits, out)
+        if tier == "高":
+            return True, _fmt_implicit_high(target, desc, tier, hits, out)
+        return True, _fmt_implicit_consent(target, desc, tier, hits, out)
+    # 未确认 → 一律先阻断（allow=False），确认卡指引「确认→留痕→放行」。
     if is_explicit:
-        # 显式外发命中敏感：不阻断（用户主动上云），但明确提示，供用户确认。
-        return True, (
-            "⚠ 显式外发提示：「%s」待发内容命中敏感信息，请确认后再外发（本次已放行执行）。\n"
-            "  → 建议先 `desen run <文档> --out workbench/desen/` 生成脱敏副本再外发。\n"
-            "  扫描详情：\n%s" % (target, out or "（无输出）")
-        )
-    return False, (
-        "✗ 隐性外发阻断：「%s」待发内容命中敏感信息，已按门禁中止执行（未发送）。\n"
-        "  → 请先 `desen run <文档> --out workbench/desen/` 生成脱敏副本，用脱敏副本重试；\n"
-        "    或确认内容可外发后设 OFFICE_KIT_SKIP_EXTERNAL_GATE=1 放行（风险自负）。\n"
-        "  扫描详情：\n%s" % (target, out or "（无输出）")
-    )
+        return False, _fmt_explicit_note(target, desc, tier, hits, out)
+    if tier == "高":
+        return False, _fmt_implicit_high(target, desc, tier, hits, out)
+    return False, _fmt_implicit_consent(target, desc, tier, hits, out)
 
 
 def cmd_run(commands, argv):

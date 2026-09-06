@@ -19,7 +19,7 @@
       "entry": "scripts/desensitize.py",
       "fallback": "none",
       "category": "抽取处理链",
-      "description": "本地脱敏（PII/密级/密钥），自动解密+OCR；子命令：scan 检测 / run 脱敏(--out 输出) / decrypt 解密 / restore 还原 / audit 审计 / preprocess 预处理 / status 索引 / guide 指引"
+      "description": "本地脱敏（PII/密级/密钥），自动解密+OCR；子命令：scan 检测 / run 脱敏(--out 输出) / decrypt 解密 / restore 还原 / audit 审计 / audit-log 外发决策留痕 / preprocess 预处理 / status 索引 / guide 指引"
     }
   ]
 }

@@ -2528,6 +2528,43 @@ def cmd_audit(args):
         _refresh_index(ws)
 
 
+def cmd_audit_log(args):
+    """记录一次外发决策（原样外发 raw / 脱敏外发 desen），追加到用户级 append-only 审计日志，
+    实现『脱敏处理的全流程可追溯』。不依赖工作区，始终可写；仅记录副本/映射表位置，不落敏感原文。"""
+    ts = datetime.now().isoformat(timespec="seconds")
+    entry = {
+        "ts": ts,
+        "target": args.target,
+        "decision": args.decision,            # raw | desen
+        "risk": args.risk or "",
+        "hits": args.hits or "",
+        "copy": args.copy or "",              # 脱敏副本路径（decision=desen）
+        "mapping": args.mapping or "",        # 加密映射表路径（decision=desen）
+        "reviewer": args.reviewer or "AI Agent（本地执行）",
+        "note": args.note or "",
+    }
+    log_dir = os.path.expanduser("~/.workbuddy")
+    os.makedirs(log_dir, exist_ok=True)
+    jsonl = os.path.join(log_dir, "desen_send_audit.jsonl")
+    md = os.path.join(log_dir, "desen_send_audit.md")
+    with open(jsonl, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    header = ("# 外发决策审计日志（append-only，脱敏处理全流程可追溯）\n\n"
+              "| 时间 | 目标 | 决策 | 风险 | 命中 | 脱敏副本 | 映射表 | 复核人 |\n"
+              "| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+    if not os.path.exists(md):
+        with open(md, "w", encoding="utf-8") as f:
+            f.write(header)
+    with open(md, "a", encoding="utf-8") as f:
+        f.write("- `%s` | %s | **%s** | %s | %s | %s | %s | %s\n" % (
+            ts, entry["target"], entry["decision"], entry["risk"], entry["hits"] or "—",
+            entry["copy"] or "—", entry["mapping"] or "—", entry["reviewer"]))
+    print("✓ 已记录外发决策审计：%s | %s | %s" % (ts, entry["target"], entry["decision"]))
+    print("  日志：%s" % jsonl)
+    if entry["decision"] == "desen" and not entry["copy"]:
+        print("  ⚠ 脱敏外发建议附带 --copy <脱敏副本路径> 与 --mapping <映射表路径> 以便复核溯源。")
+
+
 def cmd_status(args):
     """回显工作区成果索引：一站式查看全部产物位置与“可上云/保密”状态。"""
     ws = _ws_root(args)
@@ -2701,6 +2738,20 @@ def build_parser():
     ap.add_argument("--workspace", default=None,
                     help="统一成果中心（工作区）目录：审计文档写入工作区并刷新成果索引")
     ap.set_defaults(func=cmd_audit)
+
+    al = sub.add_parser("audit-log",
+                        help="记录一次外发决策（raw=用户同意原样外发 / desen=脱敏后外发），追加到用户级 append-only 审计日志")
+    al.add_argument("--target", required=True,
+                    help="外发目标/命令/工具名（如 tencent-doc / extract / ImageGen / agent-mail / send_mail）")
+    al.add_argument("--decision", required=True, choices=["raw", "desen"],
+                    help="raw=用户确认原样外发；desen=脱敏后外发")
+    al.add_argument("--risk", default="", help="风险档（高/中/低）")
+    al.add_argument("--hits", default="", help="命中摘要（如 id_card×1,phone×1）")
+    al.add_argument("--copy", default="", help="脱敏副本路径（decision=desen）")
+    al.add_argument("--mapping", default="", help="加密映射表路径（decision=desen）")
+    al.add_argument("--reviewer", default="", help="复核人（默认 AI Agent）")
+    al.add_argument("--note", default="", help="备注")
+    al.set_defaults(func=cmd_audit_log)
 
     pp = sub.add_parser("preprocess",
                          help="本地预处理关卡（自动解密 / rapidocr 本地 OCR）：生成预处理确认单与异常清单")

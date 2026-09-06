@@ -49,6 +49,8 @@ echo '{"transcript_path":"/tmp/含sheetagent无desen.txt"}' | DESEN_STOP_HOOK_MO
 ## 落地状态
 - ✅ 脚本 + hooks.json + plugin.json + 自测完成（warn 默认）。
 - ✅ 已选 **warn 模式**（用户 2026-09-04 拍板），非阻断，仅会话结束提示。
+- ✅ 2026-09-06 同步 kit.py v2.2「默认阻断 + 显式确认放行」：`_DESEN_HINTS` 增补 `confirm-raw`/`confirm_raw`，
+  使「用户 `--confirm-raw` 确认外发（前置 `desen audit-log` 留痕）」不再误判为漏检。
 - 🟡 **全局自动执行需经上述任一启用路径**（插件页导入 / 并入已启用 hook 载体 / 用户级 hooks 入口）；
   因 WorkBuddy 未公开用户级全局 hooks.json 的确切文件路径，本机能否在无 GUI 下直接扫描到此插件
   取决于运行时——若经插件页启用后未触发，请核对插件发现根目录与 hooks.json 语法。

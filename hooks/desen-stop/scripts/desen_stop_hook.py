@@ -41,8 +41,11 @@ _EXTERNAL_HINTS = (
     "sheetagent", "read_table", "resolve_local_excel", "set_cell_range",
     "tencent-docs", "tencent_docs", "云表格", "表格云", "docs.qq.com",
     # 显式/隐性外发
-    "send_mail", "agent_mail", "SendMessage", "publish", "发布",
+    "send_mail", "agent_mail", "agent-mail", "SendMessage", "publish", "发布",
     "tencent-doc", "上云", "发送邮件", "邮件发送",
+    # 云端生成（prompt 含敏感即随请求送云，v2 新增盲区收口）
+    "imagegen", "videogen", "生成图片", "生成视频", "图生视频", "文生视频",
+    "image_gen", "video_gen", "image-to-video",
     # 联网/网页（可能携带敏感原文）
     "websearch", "WebSearch", "webfetch", "WebFetch",
     "summarize --mode cloud", "--mode cloud", "--mode hybrid",
@@ -53,7 +56,9 @@ _EXTERNAL_HINTS = (
 _DESEN_HINTS = (
     "desensitize", "desensitiz", "desen", "脱敏",
     "desensitize_audit.md", "03_脱敏副本", "04_映射表", "脱敏副本",
-    "desen scan", "desen run", ".desensitize_keys",
+    "desen scan", "desen run", "desen audit-log", "desen_send_audit",
+    "confirm-raw", "confirm_raw",  # v2.2 用户显式确认原样外发（须先 audit-log，仍属已留痕路径）
+    ".desensitize_keys",
 )
 # 本地只读/仅处理类的低危动作（不算外发；可经 _local_only 豁免提示）
 _LOCAL_ONLY_HINTS = (

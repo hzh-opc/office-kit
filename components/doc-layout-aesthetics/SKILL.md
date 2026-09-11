@@ -121,7 +121,7 @@ version: "1.0.0"
 | 目录 | 职责 | 说明 |
 |---|---|---|
 | `~/.workbuddy/skills/doc-layout-aesthetics/` | **干净的技能副本** | 可复用、可打包；不在副本里做开发实验 |
-| `~/WorkBuddy/Skill-Dev/doc-layout-aesthetics/` | **工作空间**（开发参考） | 交付物、`DEVELOPMENT.md` 开发记录、测试样例 |
+| `~/WorkBuddy/Skill-Dev/office-kit/组件工作区/doc-layout-aesthetics/` | **工作空间**（开发参考，2026-09-11 迁入 office-kit 工作区） | 交付物、`DEVELOPMENT.md` 开发记录、测试样例 |
 | `~/Repositories/doc-layout-aesthetics/` | **本地 git 仓库** | 版本管理；与技能副本独立 |
 
 - **远程仓库**：<https://github.com/hzh-opc/doc-layout-aesthetics>（Apache-2.0，作者 hzh.opc / Huang Zenghao，由 WorkBuddy 协助整理）。

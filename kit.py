@@ -54,11 +54,45 @@ DEFAULT_BRANCH = "main"
 REQUIRED_MARKERS = ("manifest.json", "SKILL.md")
 
 
-def _venv_python() -> Path:
-    """返回 kit 虚拟环境解释器路径（跨平台）。"""
+# 已部署的生产副本（默认部署目录）。开发副本 / 测试工具未自建 .venv 时复用它，
+# 避免「一份组件依赖、多个 venv」的重复与漂移（用户 2026-09-11 明确）。
+DEFAULT_DEPLOY_DIR = Path.home() / "office-kit"
+
+
+def _venv_python_in(venv_dir: Path) -> Path:
+    """返回某 venv 目录内的 python 可执行文件（Windows 为 Scripts/python.exe）。"""
     if os.name == "nt":
-        return KIT_DIR / ".venv" / "Scripts" / "python.exe"
-    return KIT_DIR / ".venv" / "bin" / "python"
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
+
+
+def _venv_dir() -> Path:
+    """解析虚拟环境目录（套件内唯一事实源，按优先级取「存在即用」）。
+
+    1. ``OFFICE_KIT_VENV``          —— 显式指定 venv 目录（最高优先级，绝不覆盖用户意图）；
+    2. ``<KIT_DIR>/.venv``          —— 本副本自建（生产副本即命中此条）；
+    3. ``<OFFICE_KIT_ROOT>/.venv``  —— 宿主显式声明的套件根；
+    4. ``~/office-kit/.venv``       —— 已部署的生产副本（开发副本/测试工具复用它，不另建 venv）；
+    5. ``<KIT_DIR>/.venv``          —— 均不存在时返回本副本路径，以触发 bootstrap 引导提示。
+    """
+    candidates = []
+    env_venv = os.environ.get("OFFICE_KIT_VENV")
+    if env_venv:
+        candidates.append(Path(os.path.expanduser(env_venv)))
+    candidates.append(KIT_DIR / ".venv")
+    root = os.environ.get("OFFICE_KIT_ROOT")
+    if root:
+        candidates.append(Path(os.path.expanduser(root)) / ".venv")
+    candidates.append(DEFAULT_DEPLOY_DIR / ".venv")
+    for cand in candidates:
+        if _venv_python_in(cand).is_file():
+            return cand
+    return KIT_DIR / ".venv"
+
+
+def _venv_python() -> Path:
+    """返回 kit 虚拟环境解释器路径（跨平台），见 ``_venv_dir`` 的解析顺序。"""
+    return _venv_python_in(_venv_dir())
 
 
 def _ensure_workbench():
@@ -695,7 +729,7 @@ def _run_desen_scan(paths):
     if not desen or not venv_py.is_file():
         return False, "DESEN 组件或虚拟环境缺失，无法执行 scan"
     env = dict(os.environ)
-    env["UV_PROJECT_ENVIRONMENT"] = str(venv_py.parent)
+    env["UV_PROJECT_ENVIRONMENT"] = str(_venv_dir())
     env["OFFICE_KIT_ROOT"] = str(KIT_DIR)
     cmd = [str(venv_py), str(desen["entry"]), "scan"] + list(paths)
     try:
@@ -1026,7 +1060,7 @@ def cmd_run(commands, argv):
     env = dict(os.environ)
     env["OFFICE_KIT_ROOT"] = str(KIT_DIR)
     if py == venv_py:
-        env["UV_PROJECT_ENVIRONMENT"] = str(venv_py.parent)
+        env["UV_PROJECT_ENVIRONMENT"] = str(_venv_dir())
     try:
         proc = subprocess.run([str(py), str(entry)] + rest, env=env)
         return proc.returncode
@@ -1123,7 +1157,7 @@ def _run_step_uses(kind, tokens, cmds, dry):
         if not venv_py.is_file():
             return 3, "venv 缺失"
         env = dict(os.environ)
-        env["UV_PROJECT_ENVIRONMENT"] = str(venv_py.parent)
+        env["UV_PROJECT_ENVIRONMENT"] = str(_venv_dir())
         env["OFFICE_KIT_ROOT"] = str(KIT_DIR)
         try:
             proc = subprocess.run([str(venv_py), str(entry)] + tokens[1:], env=env)

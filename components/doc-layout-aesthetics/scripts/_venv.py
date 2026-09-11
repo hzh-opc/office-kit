@@ -7,7 +7,8 @@
 
 1. 最高优先级：环境变量 ``UV_PROJECT_ENVIRONMENT``（用户/宿主显式指定）；
 2. 其次：已激活的 ``VIRTUAL_ENV``（``source .venv/bin/activate`` 或 ``uv run`` 自动注入）；
-3. office-kit 部署自带的 ``<OFFICE_KIT_ROOT>/.venv``（若存在，见 ``_kit_venv``）；
+3. office-kit 部署自带的 ``<OFFICE_KIT_ROOT>/.venv``（或已部署的生产副本
+   ``~/office-kit/.venv``，若存在，见 ``_kit_venv``）；
    覆盖「开发者/用户裸跑脚本、未设上述变量」时落到宿主全局默认环境与 kit
    隔离环境不一致的困惑（kit 经 ``UV_PROJECT_ENVIRONMENT`` 调用时本就命中优先级 1）；
 4. 兜底平台默认（见 ``resolve_venv``）：WorkBuddy 宿主 → 全局共享默认环境
@@ -32,20 +33,32 @@ def _is_workbuddy_host():
     return os.path.isdir(os.path.expanduser("~/.workbuddy"))
 
 
+DEFAULT_KIT_ROOT = "~/office-kit"
+
+
 def _kit_venv():
     """office-kit 部署自带的隔离 .venv（若存在），作为裸跑兜底。
 
     office-kit 以组件方式部署本技能时，会在 ``<OFFICE_KIT_ROOT>/.venv`` 维护
     独立环境（kit.py 已通过 ``UV_PROJECT_ENVIRONMENT`` 注入，此处仅覆盖
     「开发者/用户直接裸跑脚本、未设该变量」的情形，避免落到宿主全局默认环境
-    与 kit 隔离环境不一致）。非 office-kit 部署（未设 ``OFFICE_KIT_ROOT`` 或其
-    ``.venv`` 不存在）返回 ``None``，不影响既有解析顺序。仅依赖标准库。
+    与 kit 隔离环境不一致）。
+
+    探测顺序：``OFFICE_KIT_ROOT``（宿主显式声明）→ ``~/office-kit``（已部署的
+    生产副本默认位置）。即「复用已部署生产副本的虚拟环境」（用户 2026-09-11 明确）。
+    非 office-kit 部署（两处 .venv 均不存在）返回 ``None``，不影响既有解析顺序。
+    仅依赖标准库。
     """
+    candidates = []
     root = os.environ.get("OFFICE_KIT_ROOT")
-    if not root:
-        return None
-    venv = os.path.join(os.path.expanduser(root), ".venv")
-    return venv if os.path.isdir(venv) else None
+    if root:
+        candidates.append(os.path.expanduser(root))
+    candidates.append(os.path.expanduser(DEFAULT_KIT_ROOT))
+    for r in candidates:
+        venv = os.path.join(r, ".venv")
+        if os.path.isdir(venv):
+            return venv
+    return None
 
 
 def resolve_venv(root):
@@ -54,7 +67,8 @@ def resolve_venv(root):
     优先级：
     1. UV_PROJECT_ENVIRONMENT（显式指定，最高优先级，绝不覆盖）；
     2. VIRTUAL_ENV（已激活的 venv）；
-    3. office-kit 部署自带的 <OFFICE_KIT_ROOT>/.venv（若存在）；
+    3. office-kit 部署自带的 ``.venv``（``<OFFICE_KIT_ROOT>/.venv`` 或已部署的生产
+       副本 ``~/office-kit/.venv``，见 ``_kit_venv``）；
     4. 平台默认：WorkBuddy 宿主 → 全局共享默认环境；其他平台 → 项目内 .venv。
     """
     explicit = os.environ.get("UV_PROJECT_ENVIRONMENT")

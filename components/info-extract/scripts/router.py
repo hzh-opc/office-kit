@@ -81,7 +81,9 @@ def _venv_python() -> Path | None:
 
     1. UV_PROJECT_ENVIRONMENT（宿主/kit 显式注入，office-kit 经 kit.py 已设置）；
     2. VIRTUAL_ENV（已激活的 venv，source .venv/bin/activate 或 uv run 注入）；
-    3. 脚本同目录 .venv（独立技能时期布局，回退保持兼容）。
+    3. office-kit 部署自带的隔离 venv（``OFFICE_KIT_ROOT/.venv``，或已部署生产副本
+       ``~/office-kit/.venv``）——套件在场即复用它，不再另建 venv（用户 2026-09-11 明确）；
+    4. 脚本同目录 .venv（独立技能时期布局，回退保持兼容）。
 
     与 doc-layout-aesthetics/scripts/_venv.py:resolve_venv 约定一致，
     使组件被「拔插」进任意 kit 时只要调用方设置了 UV_PROJECT_ENVIRONMENT，
@@ -94,6 +96,10 @@ def _venv_python() -> Path | None:
     env_virtual = os.environ.get("VIRTUAL_ENV")
     if env_virtual:
         candidates.append(Path(os.path.expanduser(env_virtual)))
+    # office-kit 部署自带 venv（复用已部署生产副本，避免重复建环境）
+    for root in (os.environ.get("OFFICE_KIT_ROOT"), "~/office-kit"):
+        if root:
+            candidates.append(Path(os.path.expanduser(root)) / ".venv")
     candidates.append(SCRIPT_DIR / ".venv")  # 回退：独立技能用法
     for base in candidates:
         cand = base / "Scripts" / "python.exe" if sys.platform.startswith("win") else base / "bin" / "python"
@@ -124,7 +130,8 @@ def ensure_runtime() -> None:
 
     print(
         "❌ 未检测到运行环境依赖（缺少 '" + (missing or "numpy/av") + "'）。\n"
-        "info-extract 依赖隔离在虚拟环境中，venv 解析顺序：UV_PROJECT_ENVIRONMENT → VIRTUAL_ENV → scripts/.venv。\n"
+        "info-extract 依赖隔离在虚拟环境中，venv 解析顺序：UV_PROJECT_ENVIRONMENT → VIRTUAL_ENV "
+        "→ office-kit .venv（OFFICE_KIT_ROOT 或 ~/office-kit）→ scripts/.venv。\n"
         "请先安装运行环境：\n"
         "  bash install.sh            # 或：python install.py\n"
         "随后可用对应 venv 解释器运行：\n"

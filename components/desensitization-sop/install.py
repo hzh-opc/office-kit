@@ -95,7 +95,8 @@ COPY_IGNORE_SUFFIX = (".pyc", ".pyo", ".DS_Store")
 SAFE_DELETE_TRIGGER_VARS = ("CODEBUDDY_SESSION_ID", "CLAUDE_SESSION_ID")
 
 # 虚拟环境 / 解释器「显式指定」的便携机制（单一事实来源，跨 install / upgrade / 文档 / 测试一致）
-# 解析顺序：--python > --venv > DESEN_PYTHON > DESEN_VENV > 默认 <skill_dir>/scripts/.venv。
+# 解析顺序：--python > --venv > DESEN_PYTHON > DESEN_VENV > 套件 venv（OFFICE_KIT_ROOT/.venv
+# 或 ~/office-kit/.venv，复用已部署生产副本）> 默认 <skill_dir>/scripts/.venv。
 # 用户显式指定后，绝不自动重建专属 venv（避免「指定了却被忽略而另建 .venv」）。
 ENV_PYTHON = "DESEN_PYTHON"   # 直接指定 python 可执行文件（复用现有环境、不新建/不管理 venv）
 ENV_VENV = "DESEN_VENV"       # 指定 venv 目录（在该目录创建/复用 venv，替代默认 scripts/.venv）
@@ -180,13 +181,25 @@ def resolve_runtime_python(cli_python=None):
 
 
 def resolve_venv_dir(skill_dir: Path, cli_venv=None):
-    """解析 venv 目录：--venv > DESEN_VENV > 默认 <skill_dir>/scripts/.venv。
+    """解析 venv 目录（按优先级，2/3 即「复用已部署生产副本的环境」）：
 
-    用户显式指定 venv 目录时，依赖装进该目录而非专属 .venv。
+    1. ``--venv`` / ``DESEN_VENV``   —— 用户显式指定，绝不覆盖；
+    2. ``OFFICE_KIT_ROOT/.venv``     —— 套件运行时（kit.py 注入）自带的隔离环境；
+    3. ``~/office-kit/.venv``        —— 已部署的生产副本（复用同一环境，不另建 venv）；
+    4. ``<skill_dir>/scripts/.venv`` —— 独立安装（S4）默认。
+
+    套件在场时依赖统一装进套件 venv，杜绝「一份依赖多个 venv」的重复与漂移
+    （用户 2026-09-11 明确）。
     """
     v = cli_venv or os.environ.get(ENV_VENV)
     if v:
         return expand(v)
+    for root in (os.environ.get(OFFICE_KIT_ENV_ROOT), OFFICE_KIT_DEFAULT_ROOT):
+        if not root:
+            continue
+        cand = expand(root) / ".venv"
+        if venv_python(cand).is_file():
+            return cand
     return skill_dir / "scripts" / ".venv"
 
 

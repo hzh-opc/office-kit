@@ -77,7 +77,7 @@ if [ "$HOST" -eq 0 ] && [ ! -x "$VENV_PY" ]; then
 fi
 
 # ---------- 5. 目标 Python 可执行性检查 ----------
-[ -x "$VENV_PY" ] || fail "目标 Python 不可用: $VENV_PY（宿主下请确认 WorkBuddy 默认环境已初始化）"
+[ -x "$VENV_PY" ] || fail "目标 Python 不可用: ${VENV_PY}（宿主下请确认 WorkBuddy 默认环境已初始化）"
 info "目标环境: $VENV_PY"
 
 # ---------- 6. 检查依赖，缺失则安装 ----------

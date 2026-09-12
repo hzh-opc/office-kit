@@ -1,0 +1,26 @@
+# 统一文本换行：一律 LF（含 Windows 检出）
+# 依据：config/skill-dev.md §默认跨平台 规则 3（跨平台基线，非附加项）
+#
+# 为什么必须：bootstrap.sh 等 shell 脚本若在 Windows 被检出为 CRLF，
+# 会在 macOS/Linux/WSL 下直接报 `bad interpreter: /usr/bin/env bash^M`，
+# 且 shebang 失效。.gitattributes 从源头消除该风险。
+* text=auto eol=lf
+
+# 显式声明文本类型，避免被误判为二进制而跳过换行归一
+*.sh    text eol=lf
+*.ps1   text eol=lf
+*.py    text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.toml  text eol=lf
+*.lock  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# 二进制：禁止任何换行转换
+*.png   binary
+*.jpg   binary
+*.otf   binary
+*.ttf   binary
+*.zip   binary

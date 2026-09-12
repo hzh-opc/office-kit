@@ -71,7 +71,7 @@ fi
 # ---------- 检查模式：只比较远程与本地版本 ----------
 if [ "$MODE" = "check" ]; then
     if [ ! -d "$TARGET/.git" ] && [ ! -f "$TARGET/SKILL.md" ]; then
-        echo "技能副本不存在: $TARGET（可运行 --dry-run 或直接升级完成首次安装）"
+        echo "技能副本不存在: ${TARGET}（可运行 --dry-run 或直接升级完成首次安装）"
         exit 0
     fi
     if [ -d "$TARGET/.git" ]; then
@@ -113,7 +113,7 @@ fi
 # ---------- dry-run：只展示将同步的内容 ----------
 if [ "$MODE" = "dry-run" ]; then
     if [ -d "$TARGET" ]; then
-        echo "以下文件将同步到 $TARGET："
+        echo "以下文件将同步到 ${TARGET}："
         rsync -avn --delete \
             --exclude='.git/' --exclude='__pycache__/' --exclude='.pytest_cache/' \
             --exclude='.DS_Store' --exclude='fonts/common/' --exclude='fonts/SHA256SUMS' \

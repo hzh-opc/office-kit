@@ -106,7 +106,7 @@ install_via_pkg() {
     if [ "$os" = "Linux" ]; then
         local pkgs="fonts-noto-cjk fonts-wqy-zenhei fonts-dejavu-core"
         if command -v apt-get >/dev/null 2>&1; then
-            echo "检测到 apt，安装: $pkgs（sudo 需要密码）..."
+            echo "检测到 apt，安装: ${pkgs}（sudo 需要密码）..."
             sudo apt-get update -qq && sudo apt-get install -y -qq $pkgs \
                 && info "apt 安装成功" || warn "apt 安装失败"
             return 0
@@ -136,7 +136,7 @@ dl_url() {
 download_and_install() {
     local tmp="$(mktemp -d /tmp/fonts.XXXXXX)"
     local got=0
-    echo "在线下载字体（镜像: $MIRROR）到 $tmp ..."
+    echo "在线下载字体（镜像: ${MIRROR}）到 $tmp ..."
 
     # 思源黑体 SC（zip 内含 Regular/Bold 等全字重 OTF）
     local sans_url

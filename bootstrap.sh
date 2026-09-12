@@ -13,14 +13,18 @@
 #   6) 平台生效：把 desen-stop 注册为「本地市场插件」并在 settings.json 启用
 #        - 市场目录 ~/.workbuddy/plugins/marketplaces/<市场>/（清单 + 插件副本）
 #        - settings.json 的 enabledPlugins 加一行 "<插件>@<市场>": true（幂等，改前自动备份）
-#        说明：平台加载插件只需「enabledPlugins 登记 + 能从市场目录解析到插件目录」，
-#              无需改 known_marketplaces.json，更无需碰 installed_plugins.json。
+#        - CLI 真正注册：plugin marketplace add + plugin install（env -i 干净环境，详见
+#          hooks/desen-stop/平台启用指引.md）；installed_plugins.json ∩ cache 副本 双校验
+#   7) 可选（--inject-soul-rules）：把「敏感信息检测闸门（常驻铁律）」幂等合并到
+#      ~/.workbuddy/SOUL.md（复用 desensitization-sop/install.py 的跨源去重 + 幂等机制，
+#      该机制会自动跳过已被 SOUL.md / office-kit 套件等同源承接的写法）。默认 dry-run。
 #
 # 前置：已安装 uv（https://docs.astral.sh/uv/）。第 6 步写 settings.json 需 python3。
 # 用法：
-#   ./bootstrap.sh                       # 常规初始化（.venv 已存在则跳过创建）
+#   ./bootstrap.sh                        # 常规初始化（.venv 已存在则跳过创建）
 #   ./bootstrap.sh --force-venv           # 强制删除并重建 .venv
 #   ./bootstrap.sh --no-enable-desen-stop # 只做文件分发，不写 settings.json（留待人工启用）
+#   ./bootstrap.sh --inject-soul-rules    # 启用第 7 步：常驻铁律合并写入 ~/.workbuddy/SOUL.md
 #
 # 环境变量：OFFICE_KIT_MARKETPLACE（本地市场名，默认 hzh-local）
 #
@@ -49,11 +53,13 @@ echo "     国内源: PyPI=${INDEX_URL}  HF=${HF_MIRROR}（如需官方源：OFF
 PY_BIN="3.13"
 FORCE_VENV=0
 ENABLE_DESEN_STOP=1
+INJECT_SOUL_RULES=0   # 第 7 步常驻铁律注入默认 dry-run；显式 --inject-soul-rules 启用
 for arg in "$@"; do
   case "$arg" in
     --force-venv) FORCE_VENV=1 ;;
     --no-enable-desen-stop) ENABLE_DESEN_STOP=0 ;;
-    -h|--help) echo "用法: ./bootstrap.sh [--force-venv] [--no-enable-desen-stop]"; exit 0 ;;
+    --inject-soul-rules) INJECT_SOUL_RULES=1 ;;
+    -h|--help) echo "用法: ./bootstrap.sh [--force-venv] [--no-enable-desen-stop] [--inject-soul-rules]"; exit 0 ;;
     *) echo "未知参数: $arg" >&2; exit 1 ;;
   esac
 done
@@ -347,6 +353,41 @@ PY
   #   直接调用会被 set -e 判定为失败而终止脚本，导致收尾摘要不打印、用户误判初始化失败。
   register_desen_stop_cli || true
 
+fi
+
+# ---------- 7. （可选）常驻铁律注入 ~/.workbuddy/SOUL.md ----------
+# 默认 dry-run：仅提示当前是否需要/被允许注入；--inject-soul-rules 显式启用时调用
+# desensitization-sop/install.py --memory-file ~/.workbuddy/SOUL.md --skip-venv --skip-tests，
+# 由 install.py 内部的跨源去重 + 幂等机制保护（自动跳过 SOUL.md/office-kit 套件已承接的等同源规则）。
+# 实测注意：本机 SOUL.md 可能已被 system prompt 注入「常驻铁律」段（属脱敏组件跨会话登记的副作用），
+# 此时 install.py 会判定「等价来源已存在」自动跳过写入——也是预期行为。
+echo "[7/7] 常驻铁律注入 ~/.workbuddy/SOUL.md..."
+SOUL_FILE="$HOME/.workbuddy/SOUL.md"
+SOUL_DESEN="$KIT_DIR/components/desensitization-sop"
+if [ "$INJECT_SOUL_RULES" -ne 1 ]; then
+  echo "      · 默认 dry-run：跳过实际写入。启用：./bootstrap.sh --inject-soul-rules  或  INJECT_SOUL_RULES=1"
+  echo "        目标落点：$SOUL_FILE"
+  if [ -f "$SOUL_FILE" ] && grep -qE "敏感信息检测闸门|常驻铁律" "$SOUL_FILE" 2>/dev/null; then
+    echo "      ✓ 检测到既有常驻铁律段——即使启用第 7 步，install.py 也会跨源去重并跳过写入（幂等安全）"
+  else
+    echo "      · 未检测到既有常驻铁律段；启用第 7 步将新建一段。"
+  fi
+else
+  if [ ! -f "$SOUL_DESEN/install.py" ]; then
+    echo "      ⚠ 未找到 $SOUL_DESEN/install.py：跳过（请先用 ./bootstrap.sh 或 kit.py repair 补齐组件）"
+  else
+    VENV_PY="$KIT_DIR/.venv/bin/python"
+    if [ ! -x "$VENV_PY" ]; then
+      echo "      ⚠ office-kit .venv 解释器未就绪（${VENV_PY}）；跳过"
+    else
+      echo "      · 调用 install.py --memory-file $SOUL_FILE --skip-venv --skip-tests"
+      # ⚠ 必须用 `if !` 守护：set -euo pipefail 下，install.py 异常退出 + sed 管道会因
+      #   pipefail 触发 set -e 中止脚本。`if ! … | sed` 上下文对 set -e 免疫。
+      if ! "$VENV_PY" "$SOUL_DESEN/install.py" --memory-file "$SOUL_FILE" --skip-venv --skip-tests 2>&1 | sed 's/^/        /'; then
+        echo "      ⚠ install.py 异常退出（详见上方）；SOUL.md 未受影响（install.py 仅在跨源去重通过后才追加）"
+      fi
+    fi
+  fi
 fi
 
 echo ">>> 初始化完成。"

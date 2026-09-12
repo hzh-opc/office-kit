@@ -12,14 +12,18 @@
 #   6) 平台生效：把 desen-stop 注册为「本地市场插件」并在 settings.json 启用
 #        - 市场目录 ~/.workbuddy/plugins/marketplaces/<市场>/（清单 + 插件副本）
 #        - settings.json 的 enabledPlugins 加一行 "<插件>@<市场>": true（幂等，改前自动备份）
-#        说明：平台加载插件只需「enabledPlugins 登记 + 能从市场目录解析到插件目录」，
-#              无需改 known_marketplaces.json，更无需碰 installed_plugins.json。
+#        - CLI 真正注册：plugin marketplace add + plugin install（env -i 干净环境，详见
+#          hooks/desen-stop/平台启用指引.md）；installed_plugins.json ∩ cache 副本 双校验
+#   7) 可选（-InjectSoulRules）：把「敏感信息检测闸门（常驻铁律）」幂等合并到
+#      ~/.workbuddy/SOUL.md（复用 desensitization-sop/install.py 的跨源去重 + 幂等机制，
+#      该机制会自动跳过已被 SOUL.md / office-kit 套件等同源承接的写法）。默认 dry-run。
 #
 # 前置：已安装 uv（https://docs.astral.sh/uv/）。第 6 步写 settings.json 需 python。
 # 用法（PowerShell）：
 #   .\bootstrap.ps1                        # 常规初始化
 #   .\bootstrap.ps1 -ForceVenv              # 强制重建 .venv
 #   .\bootstrap.ps1 -NoEnableDesenStop      # 只做文件分发，不写 settings.json
+#   .\bootstrap.ps1 -InjectSoulRules        # 启用第 7 步：常驻铁律合并写入 ~/.workbuddy/SOUL.md
 #
 # 环境变量：OFFICE_KIT_MARKETPLACE（本地市场名，默认 hzh-local）
 #
@@ -32,7 +36,8 @@
 #     如遇差异以 bootstrap.sh 为准并回修本文件。
 param(
   [switch]$ForceVenv,
-  [switch]$NoEnableDesenStop
+  [switch]$NoEnableDesenStop,
+  [switch]$InjectSoulRules   # 第 7 步常驻铁律注入默认 dry-run；显式 -InjectSoulRules 启用
 )
 
 $ErrorActionPreference = "Stop"
@@ -357,6 +362,40 @@ else:
     else { Write-Warning "      ⚠ 注册校验未全过；详见 troubleshooting/plugin-enable.md §3 / 平台启用指引.md" }
   }
   Register-DesenStopCli
+}
+
+# ---------- 7. （可选）常驻铁律注入 ~/.workbuddy/SOUL.md ----------
+# 默认 dry-run：仅提示当前是否需要/被允许注入；-InjectSoulRules 显式启用时调用
+# desensitization-sop/install.py --memory-file ~/.workbuddy/SOUL.md --skip-venv --skip-tests，
+# 由 install.py 内部的跨源去重 + 幂等机制保护（自动跳过 SOUL.md / office-kit 套件已承接的等同源规则）。
+Write-Host "[7/7] 常驻铁律注入 ~/.workbuddy/SOUL.md..."
+$SOUL_FILE = Join-Path $env:USERPROFILE ".workbuddy\SOUL.md"
+$SOUL_DESEN = Join-Path $KIT_DIR "components\desensitization-sop"
+if (-not $InjectSoulRules) {
+  Write-Host "      · 默认 dry-run：跳过实际写入。启用：.\bootstrap.ps1 -InjectSoulRules  或  `$env:INJECT_SOUL_RULES='1'"
+  Write-Host "        目标落点：$SOUL_FILE"
+  if ((Test-Path $SOUL_FILE) -and (Select-String -Path $SOUL_FILE -Pattern '敏感信息检测闸门|常驻铁律' -Quiet)) {
+    Write-Host "      ✓ 检测到既有常驻铁律段——即使启用第 7 步，install.py 也会跨源去重并跳过写入（幂等安全）"
+  } else {
+    Write-Host "      · 未检测到既有常驻铁律段；启用第 7 步将新建一段。"
+  }
+} else {
+  $installPy = Join-Path $SOUL_DESEN "install.py"
+  if (-not (Test-Path $installPy)) {
+    Write-Warning "      ⚠ 未找到 $installPy：跳过（请先用 .\bootstrap.ps1 或 kit.py repair 补齐组件）"
+  } else {
+    $VENV_PY = Join-Path $KIT_DIR ".venv\Scripts\python.exe"
+    if (-not (Test-Path $VENV_PY)) {
+      Write-Warning "      ⚠ office-kit .venv 解释器未就绪（$VENV_PY）；跳过"
+    } else {
+      Write-Host "      · 调用 install.py --memory-file $SOUL_FILE --skip-venv --skip-tests"
+      try {
+        & $VENV_PY $installPy --memory-file $SOUL_FILE --skip-venv --skip-tests
+      } catch {
+        Write-Warning "      ⚠ install.py 异常退出：$_；SOUL.md 未受影响（install.py 仅在跨源去重通过后才追加）"
+      }
+    }
+  }
 }
 
 Write-Host ">>> 初始化完成。"

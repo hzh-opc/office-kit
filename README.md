@@ -32,8 +32,8 @@ office-kit/
 ├── office-kit.sh             # 统一入口（macOS / Linux）
 ├── office-kit.ps1            # 统一入口（Windows）
 ├── kit.py                    # 动态注册与分发器（扫描 manifest.json，生成"功能记录"）
-├── bootstrap.sh              # 一键初始化（macOS / Linux）：建 venv + 修复组件 + 装依赖 + 校验 + 分发技能/钩子 + 注册本地市场并启用 desen-stop
-├── bootstrap.ps1             # 一键初始化（Windows）
+├── bootstrap.sh              # 一键初始化（macOS / Linux）：建 venv + 修复组件 + 装依赖 + 校验 + 分发技能/钩子 + 注册本地市场 + CLI 真正启用 desen-stop +（可选第 7 步）SOUL.md 常驻铁律注入
+├── bootstrap.ps1             # 一键初始化（Windows；步序与 .sh 一致）
 └── ogit                      # git 包装器（统一入口，已配置免锁）
 ```
 
@@ -46,18 +46,20 @@ office-kit/
 
 ## 安装 / 重建环境（一键初始化）
 
-提供幂等、可重复执行的一键脚本，自动完成"创建 venv → 修复组件 → 安装依赖 → 校验组件 → 分发技能与钩子 → 注册本地市场并启用 desen-stop"六步：
+提供幂等、可重复执行的一键脚本，自动完成"创建 venv → 修复组件 → 安装依赖 → 校验组件 → 分发技能与钩子 → 注册本地市场 + CLI 真正启用 desen-stop"六步（**第七步可选**）：
 
 ```bash
 # macOS / Linux
 cd office-kit
-./bootstrap.sh                 # 常规初始化（.venv 已存在则跳过创建）
-./bootstrap.sh --force-venv    # 强制删除并重建 .venv
-./bootstrap.sh --no-enable-desen-stop  # 只分发钩子文件，不改 settings.json
+./bootstrap.sh                            # 常规初始化（.venv 已存在则跳过创建）
+./bootstrap.sh --force-venv               # 强制删除并重建 .venv
+./bootstrap.sh --no-enable-desen-stop     # 只分发钩子文件，不改 settings.json
+./bootstrap.sh --inject-soul-rules        # 启用第 7 步：把常驻铁律幂等合并到 ~/.workbuddy/SOUL.md
 
 # Windows (PowerShell)
 .\bootstrap.ps1
 .\bootstrap.ps1 -ForceVenv
+.\bootstrap.ps1 -InjectSoulRules
 ```
 
 脚本行为：
@@ -66,9 +68,15 @@ cd office-kit
 3. 合并 `components/*/requirements.txt` 并 `uv pip install --index-url <国内源>` 安装全部依赖；
 4. 校验四个组件目录，并补齐 `workbench/` 阶段子目录（inbox/extract/desen/summary/render/archive/logs）；
 5. 分发用户级技能与钩子：`skills/office-kit`、`skills/desen-trigger` → `~/.workbuddy/skills/`，`hooks/desen-stop` → `~/.workbuddy/hooks/`（幂等覆盖）；
-6. **注册本地插件市场并启用 desen-stop**：建 `~/.workbuddy/plugins/marketplaces/<市场>/`（市场清单 + 插件副本），并在 `~/.workbuddy/settings.json` 的 `enabledPlugins` 幂等登记 `"desen-stop@<市场>": true`（改前自动备份为 `settings.json.bak-<日期>-desen`，原子替换、不动其它键）；市场名默认 `hzh-local`，可用 `OFFICE_KIT_MARKETPLACE` 覆盖。
+6. **注册本地市场 → CLI 真正启用 desen-stop**（三子步，缺一不可）：
+   - ① 建 `~/.workbuddy/plugins/marketplaces/<市场>/`（市场清单 + 插件副本），并在 `~/.workbuddy/settings.json` 的 `enabledPlugins` 幂等登记 `"desen-stop@<市场>": true`（改前自动备份为 `settings.json.bak-<日期>-desen`，原子替换、不动其它键）；
+   - ② CLI 注册：`plugin marketplace add '<市场目录>' && plugin install desen-stop@<市场>`（必须 `env -i` 干净环境运行，详 `hooks/desen-stop/平台启用指引.md`）；
+   - ③ 双校验：`plugins/installed_plugins.json` 含 `desen-stop@<市场>` 条目 + `plugins/cache/<市场>/desen-stop/<版本>/` 存在执行副本（两者均 ✓ 才视为真正生效）。
+   
+   市场名默认 `hzh-local`，可用 `OFFICE_KIT_MARKETPLACE` 覆盖。
 
-> **第 6 步为何存在**：桌面版插件管理页不暴露「从文件夹导入本地插件」入口，单纯把插件目录复制到 `~/.workbuddy/hooks/` **只是文件分发、平台不生效**；平台加载 Hook 插件只认「`enabledPlugins` 登记 + 能从市场目录解析到插件目录」这条路径（平台自身「召唤专家」亦如此注册）。脚本把这条路径自动化，新机器一次到位。平台**不读** `plugins/installed_plugins.json`，该文件永不手写。完整机制 / 验证 / 排查见 `hooks/desen-stop/平台启用指引.md`。
+> **第 6 步为何分三子步**：桌面版插件管理页不暴露「从文件夹导入本地插件」入口，单纯把插件目录复制到 `~/.workbuddy/hooks/` 仅是"文件分发"——平台**只**认「`enabledPlugins` 登记 + CLI `plugin install` 注册」这条路径（`installed_plugins.json` 是 CLI 安装结果文件，平台据此加载；仅手写 `enabledPlugins` 即历史所说的"假闸门"）。脚本把三子步合一自动化，新机器一次到位。
+> 完整机制 / 验证 / 排查见 `hooks/desen-stop/平台启用指引.md`。
 > **跨平台约定**：仓库根 `.gitattributes` 统一 `* text=auto eol=lf`，避免 `.sh` 在 Windows 检出为 CRLF 导致 shebang 失效；`.sh` / `.ps1` 双套脚本须行为一致。
 
 > **国内源优先**（规划文档 L18）：默认 PyPI 走清华镜像 `https://pypi.tuna.tsinghua.edu.cn/simple`、HuggingFace 走 `https://hf-mirror.com`（供 `faster-whisper` 等大模型下载）。

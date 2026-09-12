@@ -12,11 +12,18 @@
 #   6) 平台生效：把 desen-stop 注册为「本地市场插件」并在 settings.json 启用
 #        - 市场目录 ~/.workbuddy/plugins/marketplaces/<市场>/（清单 + 插件副本）
 #        - settings.json 的 enabledPlugins 加一行 "<插件>@<市场>": true（幂等，改前自动备份）
-#        - CLI 真正注册：plugin marketplace add + plugin install（env -i 干净环境，详见
-#          hooks/desen-stop/平台启用指引.md）；installed_plugins.json ∩ cache 副本 双校验
-#   7) 可选（-InjectSoulRules）：把「敏感信息检测闸门（常驻铁律）」幂等合并到
-#      ~/.workbuddy/SOUL.md（复用 desensitization-sop/install.py 的跨源去重 + 幂等机制，
+#        - CLI 真正注册：plugin marketplace add + plugin install（剥离沙箱代理/会话变量，
+#          语义对齐 sh 版 env -i，详见 hooks/desen-stop/平台启用指引.md）；
+#          installed_plugins.json ∩ cache 副本 双校验
+#   7) 可选（-InjectSoulRules）：把完整场景化常驻铁律（办公任务统一入口清单 +
+#      敏感信息外发检测四要素，--full-rules）幂等合并到 ~/.workbuddy/SOUL.md
+#      （复用 desensitization-sop/install.py 的跨源去重 + 幂等机制，
 #      该机制会自动跳过已被 SOUL.md / office-kit 套件等同源承接的写法）。默认 dry-run。
+#
+# ⚠ Windows 实机验证待办（台账 U2/U12/U13，与 deploy/machine_init.ps1 登记口径一致）：
+#   本脚本第 5/6/7 步（含 F2 涉及的 CLI 注册、-InjectSoulRules）均未经 Windows 实机
+#   验证，本机开发环境为 macOS（无 pwsh）。验证时覆盖：第 5 步分发、第 6 步 CLI 注册
+#   + 双校验（观察是否仍有 CLI 挂起）、第 7 步 --full-rules 注入与幂等重跑。
 #
 # 前置：已安装 uv（https://docs.astral.sh/uv/）。第 6 步写 settings.json 需 python。
 # 用法（PowerShell）：
@@ -59,7 +66,7 @@ $PY_BIN = "3.13"
 Write-Host ">>> office-kit 初始化开始：KIT_DIR=$KIT_DIR"
 
 # ---------- 1. 创建虚拟环境 ----------
-Write-Host "[1/6] 创建虚拟环境 (uv venv --python $PY_BIN)..."
+Write-Host "[1/7] 创建虚拟环境 (uv venv --python $PY_BIN)..."
 if (Test-Path ".venv") {
   if (-not $ForceVenv) {
     Write-Host "      .venv 已存在，跳过创建（用 -ForceVenv 可重建）"
@@ -73,7 +80,7 @@ if (Test-Path ".venv") {
 }
 
 # ---------- 2. 修复/补齐组件（缺失/损坏时在线下载，复用 kit.py repair） ----------
-Write-Host "[2/6] 修复/补齐组件（缺失/损坏时在线下载）..."
+Write-Host "[2/7] 修复/补齐组件（缺失/损坏时在线下载）..."
 if ((Get-Command python -ErrorAction SilentlyContinue) -and (Test-Path "kit.py")) {
   python kit.py repair --yes
   if ($LASTEXITCODE -ne 0) {
@@ -91,7 +98,7 @@ if ((Get-Command python -ErrorAction SilentlyContinue) -and (Test-Path "kit.py")
 }
 
 # ---------- 3. 安装依赖 ----------
-Write-Host "[3/6] 合并并安装组件依赖 (uv pip install)..."
+Write-Host "[3/7] 合并并安装组件依赖 (uv pip install)..."
 $REQ_TMP = Join-Path $env:TEMP "ok_reqs_$(Get-Random).txt"
 "" | Set-Content $REQ_TMP
 $reqFiles = Get-ChildItem components\*\requirements.txt -ErrorAction SilentlyContinue
@@ -107,7 +114,7 @@ uv pip install --index-url $INDEX_URL -r $REQ_TMP
 Remove-Item $REQ_TMP -Force
 
 # ---------- 4. 校验组件 + 补齐 workbench 目录 ----------
-Write-Host "[4/6] 校验组件 + 补齐 workbench 目录..."
+Write-Host "[4/7] 校验组件 + 补齐 workbench 目录..."
 foreach ($comp in @("info-extract", "desensitization-sop", "summarize", "doc-layout-aesthetics")) {
   if (Test-Path "components\$comp") {
     Write-Host "      ✓ $comp 存在"
@@ -127,7 +134,7 @@ foreach ($d in $WB_DIRS) {
 }
 
 # ---------- 5. 部署用户级技能 + 插件包分发（强制，幂等覆盖） ----------
-Write-Host "[5/6] 部署用户级技能与插件包（文件分发）..."
+Write-Host "[5/7] 部署用户级技能与插件包（文件分发）..."
 $WB_HOME = Join-Path $env:USERPROFILE ".workbuddy"
 $SKILLS_DIR = Join-Path $WB_HOME "skills"
 $HOOKS_DIR = Join-Path $WB_HOME "hooks"
@@ -192,7 +199,7 @@ if (Get-Command python -ErrorAction SilentlyContinue) {
 #       本步先文件分发（市场目录 + marketplace.json + enabledPlugins 登记，作为清单/兜底），
 #       再用 CLI 真正注册并安装（③）；CLI 须在干净环境运行（剥离 SANDBOX_BROKER 变量，否则静默挂起）。
 #       详见 hooks/desen-stop/平台启用指引.md / troubleshooting/plugin-enable.md。
-Write-Host "[6/6] 注册本地市场并启用 desen-stop 插件..."
+Write-Host "[6/7] 注册本地市场并启用 desen-stop 插件..."
 if ($NoEnableDesenStop) {
   Write-Host "      · 已按 -NoEnableDesenStop 跳过（仅完成文件分发；启用指引见 hooks\desen-stop\平台启用指引.md）"
 } elseif (-not (Test-Path (Join-Path $KIT_DIR "hooks\desen-stop"))) {
@@ -342,10 +349,17 @@ else:
     if (-not $env:LANG) { $env:LANG = "zh_CN.UTF-8" }
     if (-not $env:TERM) { $env:TERM = "dumb" }
     $env:PATH = "$(Split-Path $node);$env:PATH"
-    # 剥离可能继承的 sandbox broker 变量（否则 CLI 静默挂起）
-    foreach ($b in @("CODEBUDDY_SANDBOX_BROKER_IPC_ADDRESS","CODEBUDDY_BROKERED","CODEBUDDY_SESSION_ID")) {
-      if (Test-Path "env:$b") { Remove-Item "env:$b" }
-    }
+    # 剥离可能继承的 sandbox broker / 会话变量（2026-09-12 反馈 F2）：
+    # 根因同 bootstrap.sh 第 6 步 ③ —— 继承父环境的沙箱代理变量会让 CLI 静默挂起
+    # （macOS 实测 6 分钟无输出）。此处以通配前缀剥离，语义对齐 sh 版 env -i 白名单：
+    # 覆盖 CODEBUDDY_SANDBOX_*（含 BROKER_IPC_ADDRESS 等）、CODEBUDDY_BROKERED_*、
+    # CODEBUDDY_SESSION_ID、CLAUDE_SESSION_ID；仅删环境变量，不动文件与配置。
+    Get-ChildItem Env: | Where-Object {
+      $_.Name -like "CODEBUDDY_SANDBOX*" -or
+      $_.Name -like "CODEBUDDY_BROKERED*" -or
+      $_.Name -eq "CODEBUDDY_SESSION_ID" -or
+      $_.Name -eq "CLAUDE_SESSION_ID"
+    } | ForEach-Object { Remove-Item "Env:$($_.Name)" -ErrorAction SilentlyContinue }
     Write-Host "      · CLI: $cli  (node: $node)"
     Write-Host "      · 注册本地市场: plugin marketplace add"
     & $node $cli plugin marketplace add "$MARKET_DIR" 2>&1 | ForEach-Object { "        $_" }
@@ -376,7 +390,7 @@ else:
 
 # ---------- 7. （可选）常驻铁律注入 ~/.workbuddy/SOUL.md ----------
 # 默认 dry-run：仅提示当前是否需要/被允许注入；-InjectSoulRules 显式启用时调用
-# desensitization-sop/install.py --memory-file ~/.workbuddy/SOUL.md --skip-venv --skip-tests，
+# desensitization-sop/install.py --memory-file ~/.workbuddy/SOUL.md --full-rules --skip-venv --skip-tests，
 # 由 install.py 内部的跨源去重 + 幂等机制保护（自动跳过 SOUL.md / office-kit 套件已承接的等同源规则）。
 Write-Host "[7/7] 常驻铁律注入 ~/.workbuddy/SOUL.md..."
 $SOUL_FILE = Join-Path $env:USERPROFILE ".workbuddy\SOUL.md"
@@ -398,9 +412,9 @@ if (-not $InjectSoulRules) {
     if (-not (Test-Path $VENV_PY)) {
       Write-Warning "      ⚠ office-kit .venv 解释器未就绪（$VENV_PY）；跳过"
     } else {
-      Write-Host "      · 调用 install.py --memory-file $SOUL_FILE --skip-venv --skip-tests"
+      Write-Host "      · 调用 install.py --memory-file $SOUL_FILE --full-rules --skip-venv --skip-tests"
       try {
-        & $VENV_PY $installPy --memory-file $SOUL_FILE --skip-venv --skip-tests
+        & $VENV_PY $installPy --memory-file $SOUL_FILE --full-rules --skip-venv --skip-tests
       } catch {
         Write-Warning "      ⚠ install.py 异常退出：$_；SOUL.md 未受影响（install.py 仅在跨源去重通过后才追加）"
       }
@@ -410,13 +424,13 @@ if (-not $InjectSoulRules) {
 
 # ---------- 8. 部署验收（U10/B6 上游化：跨平台统一验收闸门） ----------
 if (Get-Command python -ErrorAction SilentlyContinue) {
-  Write-Host "[验收] python kit.py verify ..."
+  Write-Host "[8/7] 验收 python kit.py verify ..."
   python (Join-Path $KIT_DIR "kit.py") verify
   if ($LASTEXITCODE -ne 0) {
     Write-Warning "      ⚠ 验收未全绿：请按上方输出修复后重跑（python kit.py verify）"
   }
 } else {
-  Write-Host "[验收] 未找到 python，跳过自动验收（可手动：python kit.py verify）"
+  Write-Host "[8/7] 验收 未找到 python，跳过自动验收（可手动：python kit.py verify）"
 }
 
 Write-Host ">>> 初始化完成。"

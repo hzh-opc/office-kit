@@ -677,7 +677,8 @@ def cmd_verify(args):
         pass
     soul_ok = ("办公任务统一入口" in soul_txt) and ("敏感信息外发检测" in soul_txt)
     add("SOUL.md 常驻铁律（办公入口 + 外发检测）", soul_ok,
-        "缺失时可运行 bootstrap --inject-soul-rules 或按部署提示词 §④ 模板手工写入",
+        "缺失时可运行 bootstrap --inject-soul-rules（注入完整场景化模板，与检查关键词闭环）"
+        "或按部署提示词 §④ 模板手工写入",
         fatal=False)
 
     print("office-kit 部署验收（verify）：\n")

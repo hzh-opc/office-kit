@@ -82,6 +82,44 @@ RULE_BLOCK = (
     "配套技能：`desensitization-sop`（已安装，自动触发上云前自查与任务后审计）。\n"
 )
 
+# 完整场景化常驻铁律（--full-rules，2026-09-12 上游反馈 F1 方案①）：
+# 办公任务统一入口场景清单 + 敏感信息外发检测四要素闭环。bootstrap 第 7 步
+# （--inject-soul-rules）传 --full-rules 写入本块；office-kit kit.py verify 的
+# SOUL 检查关键词（「办公任务统一入口」+「敏感信息外发检测」）与本块标题闭环。
+# 以 FULL_MARKERS 任一命中去重（幂等）；与简版 RULE_BLOCK 并存无害。
+FULL_MARKERS = (
+    "### 常驻执行规则：办公任务统一入口",
+    "### 常驻执行规则：敏感信息外发检测",
+)
+RULE_BLOCK_FULL = (
+    "### 常驻执行规则：办公任务统一入口（场景化铁律）\n"
+    "\n"
+    "触发 `Skill: office-kit`（合并办公工具包统一入口），触发词与命令映射：\n"
+    "\n"
+    "- 转录 / 转写 / OCR / 扫描件转文字 / 画面解读 / 图片理解 / 视频文案 / 视频转文字"
+    " / 加密·在线视频 / 文档文本提取（输入为录音、视频、截图、扫描件、在线视频、文档等）→ `extract`\n"
+    "- 敏感信息 / 脱敏（PII、密钥、密级、涉敏文本 / 文件 / 数据库 / 代码）→ `desen`"
+    "（所有外发信息的扫描强约束见下方「常驻执行规则：敏感信息外发检测」）\n"
+    "- 摘要 / 提炼 / 要点 / 关键词（长文本、文档、网页、转录稿）→ `summarize`\n"
+    "- 排版 / 美化 / 文档生成（中文 PDF、Word、PPT、HTML、Markdown→PDF、腾讯文档云端）"
+    "→ `md-pdf` / `pdf` / `tencent-doc` / `render`\n"
+    "- 四旧技能（info-extract / desensitization-sop / summarize / doc-layout-aesthetics）"
+    "不再单独触发，其触发词已并入上表\n"
+    "- 边界：非上述场景（纯代码 / 数据 / 问答等）不触发，避免误判\n"
+    "- 同步维护：触发词表唯一事实源是 office-kit `SKILL.md` 的 `description`，本条为行为兜底；"
+    "组件升级 / 触发词演进时同步更新本清单，不得脱节\n"
+    "\n"
+    "### 常驻执行规则：敏感信息外发检测（铁律）\n"
+    "\n"
+    "- **范围**：所有**外发**的信息（对外推送 / 发布 / 邮件 / 提交 / 上云处理 / 粘贴到外部工具等），"
+    "含任务执行过程中补充或生成的信息。\n"
+    "- **动作**：外发前必须先经 `Skill: office-kit` → `desen` 扫描（输入检测闸门见 desensitization-sop §0）。\n"
+    "- **命中处理**：扫描发现敏感信息（PII、密钥、密级、涉敏文本 / 文件 / 数据库 / 代码）"
+    "→ 按 desen 流程就地脱敏并生成映射表。\n"
+    "- **云端回填**：需云端完成的处理一律用脱敏后内容执行；云端处理完成后按映射表回填、复核，"
+    "确认无泄露后再外发。\n"
+)
+
 # 复制技能时忽略的项（避免拷贝巨型 venv / 缓存 / 仓库元数据）
 COPY_IGNORE = {".venv", "__pycache__", ".git", "node_modules"}
 COPY_IGNORE_SUFFIX = (".pyc", ".pyo", ".DS_Store")
@@ -629,13 +667,21 @@ def _equivalent_rule_sources(memory_file: Path):
     return found
 
 
-def install_rule(memory_file: Path, skip=False):
+def install_rule(memory_file: Path, skip=False, full=False):
     if skip:
         return True, "通过 --skip-rule"
     memory_file = expand(memory_file)
     try:
         memory_file.parent.mkdir(parents=True, exist_ok=True)
         content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
+        if full:
+            # 完整场景化铁律（F1 方案①）：任一 FULL_MARKER 已存在即幂等跳过
+            if any(m in content for m in FULL_MARKERS):
+                return True, "完整场景化常驻铁律已存在，跳过（幂等）"
+            sep = "" if not content or content.endswith("\n") else "\n"
+            with memory_file.open("a", encoding="utf-8") as f:
+                f.write(sep + "\n" + RULE_BLOCK_FULL)
+            return True, "已写入（完整场景化铁律）：%s" % memory_file
         if RULE_MARKER in content:
             return True, "常驻规则已存在，跳过（幂等）"
         # 跨源去重（P1-②）：识别 SOUL.md / office-kit 套件已固化的等价规则，
@@ -677,6 +723,9 @@ def main():
     ap.add_argument("--python", default=None,
                     help="指定 Python 解释器（复用现有环境，不再新建/管理 venv）")
     ap.add_argument("--skip-rule", action="store_true", help="跳过常驻规则写入")
+    ap.add_argument("--full-rules", action="store_true",
+                    help="写入完整场景化常驻铁律（办公入口清单 + 外发四要素），"
+                         "而非 4 行简版规则（office-kit bootstrap 第 7 步用）")
     ap.add_argument("--skip-tests", action="store_true", help="跳过脚本实测")
     args = ap.parse_args()
 
@@ -744,7 +793,7 @@ def main():
 
     # 5) 常驻规则
     banner("步骤 4 / 4 · 写入常驻规则")
-    ok, detail = install_rule(memory_file, skip=args.skip_rule)
+    ok, detail = install_rule(memory_file, skip=args.skip_rule, full=args.full_rules)
     log("常驻规则：%s" % detail, "OK" if ok else "FAIL")
 
     # 汇总

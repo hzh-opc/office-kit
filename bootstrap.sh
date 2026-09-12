@@ -15,8 +15,9 @@
 #        - settings.json 的 enabledPlugins 加一行 "<插件>@<市场>": true（幂等，改前自动备份）
 #        - CLI 真正注册：plugin marketplace add + plugin install（env -i 干净环境，详见
 #          hooks/desen-stop/平台启用指引.md）；installed_plugins.json ∩ cache 副本 双校验
-#   7) 可选（--inject-soul-rules）：把「敏感信息检测闸门（常驻铁律）」幂等合并到
-#      ~/.workbuddy/SOUL.md（复用 desensitization-sop/install.py 的跨源去重 + 幂等机制，
+#   7) 可选（--inject-soul-rules）：把完整场景化常驻铁律（办公任务统一入口清单 +
+#      敏感信息外发检测四要素，--full-rules）幂等合并到 ~/.workbuddy/SOUL.md
+#      （复用 desensitization-sop/install.py 的跨源去重 + 幂等机制，
 #      该机制会自动跳过已被 SOUL.md / office-kit 套件等同源承接的写法）。默认 dry-run。
 #
 # 前置：已安装 uv（https://docs.astral.sh/uv/）。第 6 步写 settings.json 需 python3。
@@ -67,7 +68,7 @@ done
 echo ">>> office-kit 初始化开始：KIT_DIR=$KIT_DIR"
 
 # ---------- 1. 创建虚拟环境 ----------
-echo "[1/6] 创建虚拟环境 (uv venv --python $PY_BIN)..."
+echo "[1/7] 创建虚拟环境 (uv venv --python $PY_BIN)..."
 if [ -d .venv ] && [ "$FORCE_VENV" -eq 0 ]; then
   echo "      .venv 已存在，跳过创建（--force-venv 可重建）"
 else
@@ -79,7 +80,7 @@ else
 fi
 
 # ---------- 2. 修复/补齐组件（缺失/损坏时在线下载，复用 kit.py repair） ----------
-echo "[2/6] 修复/补齐组件（缺失/损坏时在线下载）..."
+echo "[2/7] 修复/补齐组件（缺失/损坏时在线下载）..."
 if command -v python3 >/dev/null 2>&1 && [ -f "$KIT_DIR/kit.py" ]; then
   python3 "$KIT_DIR/kit.py" repair --yes \
     || echo "      ⚠ 在线修复未完全成功（请检查网络或远程源）。可稍后手动：python3 kit.py repair"
@@ -95,7 +96,7 @@ else
 fi
 
 # ---------- 3. 安装依赖 ----------
-echo "[3/6] 合并并安装组件依赖 (uv pip install)..."
+echo "[3/7] 合并并安装组件依赖 (uv pip install)..."
 REQ_TMP="$(mktemp)"
 : > "$REQ_TMP"
 for f in components/*/requirements.txt; do
@@ -115,7 +116,7 @@ uv pip install --index-url "$INDEX_URL" -r "$REQ_TMP"
 rm -f "$REQ_TMP"
 
 # ---------- 4. 校验组件 + 补齐 workbench 目录 ----------
-echo "[4/6] 校验组件 + 补齐 workbench 目录..."
+echo "[4/7] 校验组件 + 补齐 workbench 目录..."
 for comp in info-extract desensitization-sop summarize doc-layout-aesthetics; do
   if [ -d "components/$comp" ]; then
     echo "      ✓ $comp 存在"
@@ -133,7 +134,7 @@ for d in inbox extract desen summary render archive logs; do
 done
 
 # ---------- 5. 部署用户级技能 + 插件包分发（强制，幂等覆盖） ----------
-echo "[5/6] 部署用户级技能与插件包（文件分发）..."
+echo "[5/7] 部署用户级技能与插件包（文件分发）..."
 SKILLS_DIR="${HOME}/.workbuddy/skills"
 HOOKS_DIR="${HOME}/.workbuddy/hooks"
 mkdir -p "$SKILLS_DIR" "$HOOKS_DIR"
@@ -188,7 +189,7 @@ fi
 #       本步先文件分发（市场目录 + marketplace.json + enabledPlugins 登记，作为清单/兜底），
 #       再用 CLI 真正注册并安装（③）；CLI 须用 `env -i` 完全干净环境运行（否则继承沙箱代理变量会静默挂起）。
 #       详见 hooks/desen-stop/平台启用指引.md / troubleshooting/plugin-enable.md。
-echo "[6/6] 注册本地市场并启用 desen-stop 插件..."
+echo "[6/7] 注册本地市场并启用 desen-stop 插件..."
 if [ "$ENABLE_DESEN_STOP" -eq 0 ]; then
   echo "      · 已按 --no-enable-desen-stop 跳过（仅完成文件分发；启用指引见 hooks/desen-stop/平台启用指引.md）"
 elif [ ! -d "$KIT_DIR/hooks/desen-stop" ]; then
@@ -369,7 +370,7 @@ fi
 
 # ---------- 7. （可选）常驻铁律注入 ~/.workbuddy/SOUL.md ----------
 # 默认 dry-run：仅提示当前是否需要/被允许注入；--inject-soul-rules 显式启用时调用
-# desensitization-sop/install.py --memory-file ~/.workbuddy/SOUL.md --skip-venv --skip-tests，
+# desensitization-sop/install.py --memory-file ~/.workbuddy/SOUL.md --full-rules --skip-venv --skip-tests，
 # 由 install.py 内部的跨源去重 + 幂等机制保护（自动跳过 SOUL.md/office-kit 套件已承接的等同源规则）。
 # 实测注意：本机 SOUL.md 可能已被 system prompt 注入「常驻铁律」段（属脱敏组件跨会话登记的副作用），
 # 此时 install.py 会判定「等价来源已存在」自动跳过写入——也是预期行为。
@@ -392,10 +393,10 @@ else
     if [ ! -x "$VENV_PY" ]; then
       echo "      ⚠ office-kit .venv 解释器未就绪（${VENV_PY}）；跳过"
     else
-      echo "      · 调用 install.py --memory-file $SOUL_FILE --skip-venv --skip-tests"
+      echo "      · 调用 install.py --memory-file $SOUL_FILE --full-rules --skip-venv --skip-tests"
       # ⚠ 必须用 `if !` 守护：set -euo pipefail 下，install.py 异常退出 + sed 管道会因
       #   pipefail 触发 set -e 中止脚本。`if ! … | sed` 上下文对 set -e 免疫。
-      if ! "$VENV_PY" "$SOUL_DESEN/install.py" --memory-file "$SOUL_FILE" --skip-venv --skip-tests 2>&1 | sed 's/^/        /'; then
+      if ! "$VENV_PY" "$SOUL_DESEN/install.py" --memory-file "$SOUL_FILE" --full-rules --skip-venv --skip-tests 2>&1 | sed 's/^/        /'; then
         echo "      ⚠ install.py 异常退出（详见上方）；SOUL.md 未受影响（install.py 仅在跨源去重通过后才追加）"
       fi
     fi
@@ -404,13 +405,13 @@ fi
 
 # ---------- 8. 部署验收（U10/B6 上游化：跨平台统一验收闸门） ----------
 if command -v python3 >/dev/null 2>&1; then
-  echo "[验收] python3 ${KIT_DIR}/kit.py verify ..."
+  echo "[8/7] 验收 python3 ${KIT_DIR}/kit.py verify ..."
   # ⚠ `if !` 守护：verify 返回非零（验收未全绿）时不得中止脚本，交由收尾提示
   if ! python3 "${KIT_DIR}/kit.py" verify; then
     echo "      ⚠ 验收未全绿：请按上方输出修复后重跑（python3 ${KIT_DIR}/kit.py verify）" >&2
   fi
 else
-  echo "[验收] 未找到 python3，跳过自动验收（可手动：python3 ${KIT_DIR}/kit.py verify）"
+  echo "[8/7] 验收 未找到 python3，跳过自动验收（可手动：python3 ${KIT_DIR}/kit.py verify）"
 fi
 
 echo ">>> 初始化完成。"

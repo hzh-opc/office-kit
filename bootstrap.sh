@@ -107,7 +107,10 @@ if [ ! -s "$REQ_TMP" ]; then
   exit 1
 fi
 echo "      依赖清单来自："
-ls components/*/requirements.txt 2>/dev/null | sed 's/^/        - /'
+# ⚠ `if !` 守护：set -euo pipefail 下，ls 无匹配/失败会经管道触发 set -e 中止脚本（U11 修复）
+if ! ls components/*/requirements.txt 2>/dev/null | sed 's/^/        - /'; then
+  echo "        - （枚举失败；不影响后续安装，依赖清单以上方合并结果为准）"
+fi
 uv pip install --index-url "$INDEX_URL" -r "$REQ_TMP"
 rm -f "$REQ_TMP"
 
@@ -165,6 +168,15 @@ else
   echo "      ⚠ 仓库缺失 hooks/desen-stop，跳过" >&2
 fi
 echo "      （技能为幂等覆盖、重跑即同步仓库最新版）"
+
+# 5d. skills-registry 登记（U7/B2 上游化：自动生成/更新，幂等；人工备注区块保留）
+if command -v python3 >/dev/null 2>&1; then
+  if ! python3 "${KIT_DIR}/kit.py" register; then
+    echo "      ⚠ skills-registry 自动生成失败（可稍后手动：python3 ${KIT_DIR}/kit.py register）" >&2
+  fi
+else
+  echo "      ⚠ 未找到 python3，跳过 skills-registry 自动登记（部署 Agent 按 6 字段手工登记）" >&2
+fi
 
 # ---------- 6. 平台生效：注册本地市场 + 启用 desen-stop（幂等） ----------
 #     ⚠️ 机制（2026-09-12 实证，详见 troubleshooting/plugin-enable.md）：
@@ -388,6 +400,17 @@ else
       fi
     fi
   fi
+fi
+
+# ---------- 8. 部署验收（U10/B6 上游化：跨平台统一验收闸门） ----------
+if command -v python3 >/dev/null 2>&1; then
+  echo "[验收] python3 ${KIT_DIR}/kit.py verify ..."
+  # ⚠ `if !` 守护：verify 返回非零（验收未全绿）时不得中止脚本，交由收尾提示
+  if ! python3 "${KIT_DIR}/kit.py" verify; then
+    echo "      ⚠ 验收未全绿：请按上方输出修复后重跑（python3 ${KIT_DIR}/kit.py verify）" >&2
+  fi
+else
+  echo "[验收] 未找到 python3，跳过自动验收（可手动：python3 ${KIT_DIR}/kit.py verify）"
 fi
 
 echo ">>> 初始化完成。"

@@ -172,6 +172,16 @@ if (Test-Path (Join-Path $KIT_DIR "hooks\desen-stop")) {
 }
 Write-Host "      （技能为幂等覆盖、重跑即同步仓库最新版）"
 
+# 5d. skills-registry 登记（U7/B2 上游化：自动生成/更新，幂等；人工备注区块保留）
+if (Get-Command python -ErrorAction SilentlyContinue) {
+  python (Join-Path $KIT_DIR "kit.py") register
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "      ⚠ skills-registry 自动生成失败（可稍后手动：python kit.py register）"
+  }
+} else {
+  Write-Warning "      ⚠ 未找到 python，跳过 skills-registry 自动登记（部署 Agent 按 6 字段手工登记）"
+}
+
 # ---------- 6. 平台生效：注册本地市场 + 启用 desen-stop（幂等） ----------
 #     ⚠️ 机制（2026-09-12 实证，详见 troubleshooting/plugin-enable.md）：
 #       仅写 `enabledPlugins` +「市场目录」是「假闸门」——平台只计数、市场未注册，
@@ -396,6 +406,17 @@ if (-not $InjectSoulRules) {
       }
     }
   }
+}
+
+# ---------- 8. 部署验收（U10/B6 上游化：跨平台统一验收闸门） ----------
+if (Get-Command python -ErrorAction SilentlyContinue) {
+  Write-Host "[验收] python kit.py verify ..."
+  python (Join-Path $KIT_DIR "kit.py") verify
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "      ⚠ 验收未全绿：请按上方输出修复后重跑（python kit.py verify）"
+  }
+} else {
+  Write-Host "[验收] 未找到 python，跳过自动验收（可手动：python kit.py verify）"
 }
 
 Write-Host ">>> 初始化完成。"

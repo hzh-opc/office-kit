@@ -57,6 +57,7 @@ unzip /tmp/ok.zip -d /tmp && cd /tmp/office-kit-main
 5. **distribute user-level assets** (idempotent copy, not symlink):
    - `skills/office-kit/` + `skills/desen-trigger/` → `~/.workbuddy/skills/`
    - `hooks/desen-stop/` → `~/.workbuddy/hooks/`
+   - auto-generate `~/.workbuddy/skills-registry.md` via `kit.py register`（幂等；`<!-- 人工备注 -->` 区块保留；新机器无须手工按 6 字段登记）;
 6. **register local marketplace + CLI 真启用 desen-stop** (three sub-steps required for the plugin to actually execute):
    ① build marketplace under `~/.workbuddy/plugins/marketplaces/<市场>/` and write `"desen-stop@<市场>": true` into `~/.workbuddy/settings.json.enabledPlugins` (idempotent + auto backup);
    ② run CLI `plugin marketplace add` + `plugin install` (must use `env -i` clean env; detail `hooks/desen-stop/平台启用指引.md`);
@@ -66,12 +67,15 @@ unzip /tmp/ok.zip -d /tmp && cd /tmp/office-kit-main
 ## 3. Verify
 
 ```bash
-./bootstrap.sh                # idempotent; exits 0 when everything is ready
+./bootstrap.sh                # idempotent; exits 0 when everything is ready; 收尾自动跑 verify
+python kit.py verify          # 统一部署验收闸门：组件 + 分发 + desen-stop 平台生效四校验 + registry + SOUL 铁律（警告级）
 python kit.py doctor          # 环境 / 组件自检（venv、版本一致性、.env 状态、enabledPlugins）
 ls ~/.workbuddy/plugins/installed_plugins.json | xargs -I{} grep -c "desen-stop" {}   # 应 ≥1
 ls ~/.workbuddy/plugins/cache/hzh-local/desen-stop/                                    # 应有执行副本
 ls ~/.workbuddy/skills/                                                               # 应含 office-kit/ + desen-trigger/
 ```
+
+> **机器级环境（可选，与技能安装解耦）**：新机器如需复刻「uv + 国内源 uv.toml 5 源 + 默认环境 `envs/default` + Python 默认环境常驻铁律」，运行 `deploy/machine_init.sh`（macOS/Linux）或 `deploy/machine_init.ps1`（Windows，未实机验证）——不依赖部署提示词，单独安装本套件时无须此步。
 
 Each failure prints a `hint` — follow it and re-run. A successful install ends with exit code `0` and the closing summary lines. If you only want to re-distribute assets without touching the plugin registration, pass `--no-enable-desen-stop`.
 

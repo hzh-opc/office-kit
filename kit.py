@@ -470,6 +470,235 @@ def cmd_doctor(components):
     print("自检结果：%s" % ("通过 ✅" if ok else "存在问题 ❌（可 kit.py check 诊断 / kit.py repair 在线修复）"))
 
 
+# ---------- skills-registry 自动生成（U7/B2）与部署验收（U10/B6） ----------
+# 反馈「office-kit-可并入上游操作审计与反馈-2026-09-12」B2/B6 的上游化落地：
+#   register —— bootstrap 第 5 步调用，扫描已部署技能/钩子，幂等生成 <BASE>/skills-registry.md；
+#   verify   —— 部署完成后的统一验收闸门（跨平台，替代手工验收清单）。
+
+# registry 中人工维护内容的保护区块标记（register 重写时原样保留）
+_REGISTRY_MANUAL_BEGIN = "<!-- 人工备注开始 -->"
+_REGISTRY_MANUAL_END = "<!-- 人工备注结束 -->"
+
+# 登记模板：仓库 / 版本约束 / 冲突风险 / 关键注意 / 安装 / 升级（与部署提示词 §④ 对齐）
+_REGISTRY_TEMPLATES = {
+    "office-kit": {
+        "kind": "skill",
+        "repo": "https://github.com/hzh-opc/office-kit",
+        "version_constraint": "组件级独立更新（kit.py check / upgrade / repair）",
+        "conflict": "取代 info-extract / desensitization-sop / summarize / doc-layout-aesthetics 四个独立技能，不得并存",
+        "notes": "统一编排入口 office-kit.sh；.venv 自含于 ~/office-kit/.venv，不并入默认环境；desen 外发闸门引擎",
+        "install": "./bootstrap.sh（技能注册+钩子分发+平台启用全自动）",
+        "upgrade": "kit.py check → upgrade / repair（升级前先 diff 仓库当前版确认脚本无被改风险）",
+    },
+    "desen-trigger": {
+        "kind": "skill",
+        "repo": "https://github.com/hzh-opc/office-kit",
+        "version_constraint": "随 office-kit bootstrap 第 5b 步分发",
+        "conflict": "与 office-kit desen 同引擎，勿重复安装旧版独立 desensitization-sop 技能",
+        "notes": "跨场景触发壳（覆盖非办公场景的外发检测路由），指向 office-kit desen 引擎（同一脱敏管线）",
+        "install": "./bootstrap.sh 第 5b 步自动部署",
+        "upgrade": "随 office-kit 套件升级（bootstrap 重跑即幂等覆盖）",
+    },
+    "desen-stop": {
+        "kind": "hook",
+        "repo": "https://github.com/hzh-opc/office-kit",
+        "version_constraint": "随 office-kit bootstrap 第 5c/6 步分发并启用",
+        "conflict": "与 desen-trigger / 常驻铁律互补，非替代（三层闸门：触发壳 / 常驻铁律 / Stop hook 兜底）",
+        "notes": "Stop hook 插件；文件分发 ≠ 平台生效，必须经 CLI 注册（enabledPlugins + known_marketplaces + installed_plugins + cache 四点齐备）",
+        "install": "./bootstrap.sh 第 6 步（plugin marketplace add + plugin install）",
+        "upgrade": "随 office-kit 套件升级后重跑 bootstrap 第 6 步",
+    },
+}
+
+
+def _registry_version(path: Path) -> str:
+    """从技能/插件目录提取版本号（SKILL.md frontmatter 或 plugin.json，失败返回 '?'）。"""
+    for probe in (path / "SKILL.md",):
+        if probe.is_file():
+            try:
+                m = re.search(r'^version:\s*["\']?([^"\'\s]+)', probe.read_text(encoding="utf-8"), re.M)
+                if m:
+                    return m.group(1)
+            except Exception:  # noqa: BLE001
+                pass
+    for pj in path.rglob("plugin.json"):
+        try:
+            data = json.loads(pj.read_text(encoding="utf-8"))
+            v = data.get("version")
+            if v:
+                return str(v)
+        except Exception:  # noqa: BLE001
+            pass
+    return "?"
+
+
+def cmd_register(args):
+    """生成/更新 <BASE>/skills-registry.md（幂等；保留人工备注区块）。"""
+    parser = argparse.ArgumentParser(prog="register", description="生成/更新 skills-registry.md（U7/B2 上游化）")
+    parser.add_argument("--base", default=None, help="WorkBuddy 用户目录（默认 ~/.workbuddy）")
+    ns = parser.parse_args(args)
+    base = Path(os.path.expanduser(ns.base)).resolve() if ns.base else Path.home() / ".workbuddy"
+
+    rows = []
+    for name, tpl in _REGISTRY_TEMPLATES.items():
+        deployed = base / ("skills" if tpl["kind"] == "skill" else "hooks") / name
+        if deployed.is_dir():
+            ver = _registry_version(deployed)
+            status = "已部署 v%s" % ver
+        else:
+            status = "未部署"
+        rows.append((name, tpl, status))
+
+    # browser-skill 若在装也顺手登记（Node CLI，无 venv）
+    bskill = base / "skills" / "browser-skill"
+    if bskill.is_dir():
+        rows.append(("browser-skill", {
+            "kind": "skill",
+            "repo": "https://github.com/Tencent/BrowserSkill",
+            "version_constraint": "bsk 管理（bsk update，无校验和则拒绝自动升级）",
+            "conflict": "无 Python 依赖，不涉及 venv",
+            "notes": "Node CLI（~/.local/bin/bsk）；受限网络下资产下载走 api.github.com release assets + 官方 sha256",
+            "install": "审查后 sh install.sh → bsk install-skill --yes → bsk doctor",
+            "upgrade": "bsk update + bsk install-skill --yes",
+        }, "已部署 v%s" % _registry_version(bskill)))
+
+    lines = [
+        "# skills-registry（由 office-kit `kit.py register` 自动生成）",
+        "",
+        "> 生成时间：%s ｜ 重新生成：`python3 ~/office-kit/kit.py register`" % datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "> 本文件**非驻留**；`%s` 与 `%s` 之间的人工内容在重新生成时保留。" % (_REGISTRY_MANUAL_BEGIN, _REGISTRY_MANUAL_END),
+        "",
+        "| 技能/插件 | 状态 | 仓库 | 版本约束 | 冲突风险 | 关键注意 | 安装 | 升级 |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for name, tpl, status in rows:
+        cells = [name, status, tpl["repo"], tpl["version_constraint"], tpl["conflict"],
+                 tpl["notes"], tpl["install"], tpl["upgrade"]]
+        lines.append("| %s |" % " | ".join(c.replace("|", "\\|") for c in cells))
+    lines.append("")
+
+    reg = base / "skills-registry.md"
+    manual = ""
+    if reg.is_file():
+        try:
+            old = reg.read_text(encoding="utf-8")
+            m = re.search(r"%s(.*?)%s" % (re.escape(_REGISTRY_MANUAL_BEGIN), re.escape(_REGISTRY_MANUAL_END)),
+                          old, re.S)
+            if m:
+                manual = "%s%s%s\n" % (_REGISTRY_MANUAL_BEGIN, m.group(1).rstrip("\n"), _REGISTRY_MANUAL_END)
+        except Exception:  # noqa: BLE001
+            manual = ""
+    if manual:
+        lines.extend([manual, ""])
+    reg.parent.mkdir(parents=True, exist_ok=True)
+    reg.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    print("✓ skills-registry 已生成/更新：%s（%d 项登记）" % (reg, len(rows)))
+    return 0
+
+
+def _json_mentions(data, needle: str) -> bool:
+    """递归判定 JSON 结构中任意键/字符串值是否含 needle（对平台各文件 schema 保持宽容）。"""
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if needle in str(k) or _json_mentions(v, needle):
+                return True
+        return False
+    if isinstance(data, list):
+        return any(_json_mentions(v, needle) for v in data)
+    if isinstance(data, str):
+        return needle in data
+    return False
+
+
+def cmd_verify(args):
+    """部署验收闸门（U10/B6 上游化）：环境 + 组件 + 平台生效四校验 + registry。"""
+    parser = argparse.ArgumentParser(prog="verify", description="部署验收（跨平台统一验收脚本）")
+    parser.add_argument("--base", default=None, help="WorkBuddy 用户目录（默认 ~/.workbuddy）")
+    ns = parser.parse_args(args)
+    base = Path(os.path.expanduser(ns.base)).resolve() if ns.base else Path.home() / ".workbuddy"
+    comps, _cmds, _caps = _discover_components()
+
+    checks = []  # (name, ok, detail, fatal)
+
+    def add(name, ok, detail="", fatal=True):
+        checks.append((name, ok, detail, fatal))
+
+    # 1) venv
+    vpy = _venv_python()
+    add("kit .venv 解释器", vpy.is_file(), str(vpy))
+    # 2) 组件目录 + 入口
+    missing = []
+    for name, data in sorted(comps.items()):
+        cdir = KIT_DIR / "components" / name
+        if not cdir.is_dir():
+            missing.append(name)
+            continue
+        for cmd in data.get("commands", []) or []:
+            if not (KIT_DIR / "components" / name / cmd.get("entry", "")).is_file():
+                missing.append("%s:%s" % (name, cmd.get("name")))
+    add("组件完整性（目录+入口）", not missing, ("缺失：" + ", ".join(missing)) if missing else "4 组件齐备")
+    # 3) 技能/钩子分发
+    for rel in ("skills/office-kit", "skills/desen-trigger", "hooks/desen-stop"):
+        add("分发 %s" % rel, (base / rel).is_dir(), str(base / rel))
+    # 4) 平台生效四校验（desen-stop）
+    plugins = _desen_stop_enabled()
+    market = ""
+    if plugins:
+        market = plugins[0].split("@", 1)[1] if "@" in plugins[0] else ""
+        add("enabledPlugins 登记", True, ", ".join(plugins))
+    else:
+        add("enabledPlugins 登记", False, "settings.json 无 desen-stop@<市场> 条目（假闸门）")
+    if market:
+        kmj = base / "plugins" / "known_marketplaces.json"
+        try:
+            add("known_marketplaces 含市场 %s" % market,
+                _json_mentions(json.loads(kmj.read_text(encoding="utf-8")), market), str(kmj))
+        except Exception as e:  # noqa: BLE001
+            add("known_marketplaces 含市场 %s" % market, False, "读取失败：%s" % e)
+        ipj = base / "plugins" / "installed_plugins.json"
+        try:
+            add("installed_plugins 含 %s" % plugins[0],
+                _json_mentions(json.loads(ipj.read_text(encoding="utf-8")), plugins[0]), str(ipj))
+        except Exception as e:  # noqa: BLE001
+            add("installed_plugins 含 %s" % plugins[0], False, "读取失败：%s" % e)
+        cache_dir = base / "plugins" / "cache" / market / "desen-stop"
+        has_cache = cache_dir.is_dir() and any(cache_dir.iterdir())
+        add("cache 执行副本", has_cache, str(cache_dir))
+    # 5) skills-registry
+    reg = base / "skills-registry.md"
+    reg_ok = reg.is_file() and "office-kit" in (reg.read_text(encoding="utf-8") if reg.is_file() else "")
+    add("skills-registry 已登记", reg_ok, str(reg))
+    # 6) SOUL.md 常驻铁律（第 7 步为可选项 → 缺失只警告不判败）
+    soul = base / "SOUL.md"
+    soul_txt = ""
+    try:
+        soul_txt = soul.read_text(encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    soul_ok = ("办公任务统一入口" in soul_txt) and ("敏感信息外发检测" in soul_txt)
+    add("SOUL.md 常驻铁律（办公入口 + 外发检测）", soul_ok,
+        "缺失时可运行 bootstrap --inject-soul-rules 或按部署提示词 §④ 模板手工写入",
+        fatal=False)
+
+    print("office-kit 部署验收（verify）：\n")
+    fatal_fail = 0
+    warn = 0
+    for name, ok, detail, fatal in checks:
+        mark = "✓" if ok else ("⚠" if not fatal else "✗")
+        print("  %s %s%s" % (mark, name, ("  — %s" % detail) if detail else ""))
+        if not ok:
+            if fatal:
+                fatal_fail += 1
+            else:
+                warn += 1
+    print()
+    if fatal_fail:
+        print("验收结果：❌ %d 项未通过（%d 项警告）——修复后重跑 verify。" % (fatal_fail, warn))
+        return 1
+    print("验收结果：通过 ✅（%d 项警告）" % warn)
+    return 0
+
+
 def _slugify(text):
     out = []
     for ch in text.lower():
@@ -1594,6 +1823,10 @@ HELP_TEXT = """office-kit 动态注册与分发器
   overlaps             列出跨组件功能重叠（capabilities 标签比对）
   doctor               环境与组件自检（venv 解释器 + 组件/入口完整性 + 版本一致性
                        + config/.env 状态 + desen-stop 平台启用）
+  register [--base d]  扫描已部署技能/钩子，幂等生成 <BASE>/skills-registry.md
+                       （bootstrap 第 5 步自动调用；人工备注区块重写时保留）
+  verify [--base d]    部署验收闸门：环境 + 组件 + 技能/钩子分发 + desen-stop
+                       平台生效四校验 + skills-registry + SOUL.md 常驻铁律（警告级）
   check [组件...]       检测组件完整性（本地）+ 版本（远程），只读不下载（--offline 仅本地）
   upgrade [组件...]     在线升级到远程最新版（--force 强制同步 / --yes 跳过确认）
   repair [组件...]      在线修复损坏/缺失组件（--yes 跳过确认）
@@ -1642,6 +1875,10 @@ def main(argv=None):
     if sub == "doctor":
         cmd_doctor(comps)
         return 0
+    if sub == "register":
+        return cmd_register(argv[1:])
+    if sub == "verify":
+        return cmd_verify(argv[1:])
     if sub == "check":
         return cmd_check(comps, argv[1:])
     if sub == "upgrade":

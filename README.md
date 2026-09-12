@@ -32,8 +32,11 @@ office-kit/
 ├── office-kit.sh             # 统一入口（macOS / Linux）
 ├── office-kit.ps1            # 统一入口（Windows）
 ├── kit.py                    # 动态注册与分发器（扫描 manifest.json，生成"功能记录"）
-├── bootstrap.sh              # 一键初始化（macOS / Linux）：建 venv + 修复组件 + 装依赖 + 校验 + 分发技能/钩子 + 注册本地市场 + CLI 真正启用 desen-stop +（可选第 7 步）SOUL.md 常驻铁律注入
+├── bootstrap.sh              # 一键初始化（macOS / Linux）：建 venv + 修复组件 + 装依赖 + 校验 + 分发技能/钩子 + skills-registry 登记 + 注册本地市场 + CLI 真正启用 desen-stop +（可选第 7 步）SOUL.md 常驻铁律注入 + verify 验收
 ├── bootstrap.ps1             # 一键初始化（Windows；步序与 .sh 一致）
+├── deploy/                   # 机器级环境初始化（与技能安装解耦；新机器先跑它再跑 bootstrap）
+│   ├── machine_init.sh       #   macOS/Linux：uv + uv.toml 5 源 + envs/default + Python 默认环境铁律
+│   └── machine_init.ps1      #   Windows：同上（步序一致）
 └── ogit                      # git 包装器（统一入口，已配置免锁）
 ```
 
@@ -67,13 +70,16 @@ cd office-kit
 2. 修复/补齐组件：缺失/损坏时在线下载（复用 `kit.py repair`，与 `check`/`upgrade` 同一套远程源设计）；
 3. 合并 `components/*/requirements.txt` 并 `uv pip install --index-url <国内源>` 安装全部依赖；
 4. 校验四个组件目录，并补齐 `workbench/` 阶段子目录（inbox/extract/desen/summary/render/archive/logs）；
-5. 分发用户级技能与钩子：`skills/office-kit`、`skills/desen-trigger` → `~/.workbuddy/skills/`，`hooks/desen-stop` → `~/.workbuddy/hooks/`（幂等覆盖）；
+5. 分发用户级技能与钩子：`skills/office-kit`、`skills/desen-trigger` → `~/.workbuddy/skills/`，`hooks/desen-stop` → `~/.workbuddy/hooks/`（幂等覆盖）；随后 `kit.py register` **自动生成/更新 `~/.workbuddy/skills-registry.md`**（幂等；`<!-- 人工备注 -->` 区块保留，新机器无须手工登记）；
 6. **注册本地市场 → CLI 真正启用 desen-stop**（三子步，缺一不可）：
    - ① 建 `~/.workbuddy/plugins/marketplaces/<市场>/`（市场清单 + 插件副本），并在 `~/.workbuddy/settings.json` 的 `enabledPlugins` 幂等登记 `"desen-stop@<市场>": true`（改前自动备份为 `settings.json.bak-<日期>-desen`，原子替换、不动其它键）；
    - ② CLI 注册：`plugin marketplace add '<市场目录>' && plugin install desen-stop@<市场>`（必须 `env -i` 干净环境运行，详 `hooks/desen-stop/平台启用指引.md`）；
    - ③ 双校验：`plugins/installed_plugins.json` 含 `desen-stop@<市场>` 条目 + `plugins/cache/<市场>/desen-stop/<版本>/` 存在执行副本（两者均 ✓ 才视为真正生效）。
    
    市场名默认 `hzh-local`，可用 `OFFICE_KIT_MARKETPLACE` 覆盖。
+7. （收尾）`kit.py verify` **统一部署验收闸门**：组件完整性 + 技能/钩子分发 + desen-stop 平台生效四校验（enabledPlugins / known_marketplaces / installed_plugins / cache 副本）+ skills-registry + SOUL.md 常驻铁律（警告级）。可随时单独运行 `python3 kit.py verify [--base <dir>]`。
+
+> **机器级环境初始化（可选，与技能安装解耦）**：新机器如需复刻「uv 安装 + uv.toml 5 源 + 默认环境 `envs/default` + Python 默认环境常驻铁律」，运行 `deploy/machine_init.sh`（macOS/Linux）或 `deploy/machine_init.ps1`（Windows，⚠ 未经实机验证）；四步全幂等，与 `bootstrap.sh` 顺序不强制。
 
 > **第 6 步为何分三子步**：桌面版插件管理页不暴露「从文件夹导入本地插件」入口，单纯把插件目录复制到 `~/.workbuddy/hooks/` 仅是"文件分发"——平台**只**认「`enabledPlugins` 登记 + CLI `plugin install` 注册」这条路径（`installed_plugins.json` 是 CLI 安装结果文件，平台据此加载；仅手写 `enabledPlugins` 即历史所说的"假闸门"）。脚本把三子步合一自动化，新机器一次到位。
 > 完整机制 / 验证 / 排查见 `hooks/desen-stop/平台启用指引.md`。

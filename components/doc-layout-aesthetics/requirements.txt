@@ -1,4 +1,6 @@
 # doc-layout-aesthetics 组件依赖（与上游 pyproject.toml 保持一致）
+# 用途：供 office-kit bootstrap.sh 的 `for f in components/*/requirements.txt` 合并安装步骤消费
+#       （套件侧必需，非残留）。独立仓库另有 pyproject.toml + uv.lock 走 uv 路线，二者内容同源。
 # 排版美化交付：docx / pptx / html / pdf，以及 Markdown→PDF 直转
 python-docx>=1.2.0
 python-pptx>=1.0.2

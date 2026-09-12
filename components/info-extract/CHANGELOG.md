@@ -1,5 +1,11 @@
 # CHANGELOG · info-extract
 
+## [0.6.4] — 2026-09-12 · 解释器解析补齐「复用 office-kit 生产 venv」档位
+
+- **`scripts/router.py` `_venv_python()`**：解析顺序补齐 `OFFICE_KIT_ROOT/.venv` 与 `~/office-kit/.venv`（已部署生产副本），使组件被「拔插」进任意 office-kit 套件时**只要复用同一 venv 即可运行**，不再因缺依赖落到宿主全局环境。完整顺序：`UV_PROJECT_ENVIRONMENT` → `VIRTUAL_ENV` → `OFFICE_KIT_ROOT/.venv` → `~/office-kit/.venv` → `scripts/.venv`（独立技能布局回退）。
+- **版本号对齐**：`VERSION` / `manifest.json` / `SKILL.md` 三方同步至 `0.6.4`。
+- 背景：2026-09-11 全面检查（P1-4）确认 `~/.workbuddy/binaries/python/envs/default` 已不含本组件依赖，解析必须命中套件 venv。
+
 ## [未发布] — 2026-09-04 · 交互与展示优化落地（组件反馈「交互与展示优化」7 项）
 
 ### 新增（交付物组织 + 面向一般用户的可查阅性）

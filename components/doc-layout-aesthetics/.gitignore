@@ -4,6 +4,10 @@ __pycache__/
 *.pyc
 .DS_Store
 # pytest 缓存
+# 运行期缓存 / 临时（运行时自动重建，不入库）
+.cache/
+.tmp/
+
 .pytest_cache/
 # 字体二进制（每个 OTF/TTF/TTC ~25MB，总 100MB+，不进 git；
 # 通过 fonts/install_fonts.sh --online 下载，或从 npmmirror 离线拉取；见 ../FONTS.md）

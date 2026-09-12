@@ -2,7 +2,7 @@
 name: doc-layout-aesthetics
 description: 提炼自侯捷《Word 排版艺术》的中文排版美学规范，覆盖"对齐/对比/亲密性/重复/留白/节制/中英文混排"七大原则，并扩展至常见纸型(含手账)、网页(响应式)、幻灯片与平板/手机多终端显示优化。This skill should be used when generating or polishing Chinese documents, reports, theses, manuals, proposals, slides, web pages, HTML, or PDFs, or whenever a task asks to make output more professional, readable, typographically correct, or multi-device friendly. 同时提供 Markdown→PDF 直转、Word→PDF、PPT、响应式 HTML、腾讯文档云端路径等一站式排版交付。触发词：排版、版面、格式、美化、Word、文档、幻灯片、PPT、PDF、网页、HTML、响应式、手账、纸型、对齐、留白、字体、行距、中英文混排、目录、样式、多终端、手机、平板、腾讯文档、云端文档、Markdown 转 PDF、md 转 pdf、markdown to pdf。
 agent_created: true
-version: "1.0.0"
+version: "1.0.1"
 ---
 
 # 版面美学观 · 中文排版规范
@@ -120,7 +120,7 @@ version: "1.0.0"
 
 | 目录 | 职责 | 说明 |
 |---|---|---|
-| `~/.workbuddy/skills/doc-layout-aesthetics/` | **干净的技能副本** | 可复用、可打包；不在副本里做开发实验 |
+| `~/.workbuddy/skills/doc-layout-aesthetics/` | **干净的技能副本**（**仅 S4 独立安装场景**；本机已退役） | 可复用、可打包；不在副本里做开发实验 |
 | `~/WorkBuddy/Skill-Dev/office-kit/组件工作区/doc-layout-aesthetics/` | **工作空间**（开发参考，2026-09-11 迁入 office-kit 工作区） | 交付物、`DEVELOPMENT.md` 开发记录、测试样例 |
 | `~/Repositories/doc-layout-aesthetics/` | **本地 git 仓库** | 版本管理；与技能副本独立 |
 

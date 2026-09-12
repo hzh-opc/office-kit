@@ -95,6 +95,73 @@ def _venv_python() -> Path:
     return _venv_python_in(_venv_dir())
 
 
+# ---------- config/.env 加载器（大模型 / 密钥 / venv 覆写的单一来源） ----------
+# 用法：cp config/.env.example config/.env 后填写；config/.env 已被 .gitignore 排除，绝不入库。
+# 加载语义：**只补当前未设置的变量**——已 export 的同名变量永远优先，绝不覆盖用户显式意图。
+# 生效范围：经 ``kit.py`` 分发的调用（含注入组件子进程）；组件被直接裸跑时不加载。
+ENV_FILE_DIR = "config"
+ENV_FILE_NAME = ".env"
+
+# 本次进程从 config/.env 实际注入的键名（供 doctor 展示；main() 启动时由 _bootstrap_env 填充）
+_ENV_FILE_APPLIED = []
+_ENV_BOOTSTRAPPED = False
+
+
+def _env_file_path() -> Path:
+    """定位 .env 文件：``OFFICE_KIT_ENV_FILE`` > ``<KIT_DIR>/config/.env``。"""
+    override = os.environ.get("OFFICE_KIT_ENV_FILE")
+    if override:
+        return Path(os.path.expanduser(override))
+    return KIT_DIR / ENV_FILE_DIR / ENV_FILE_NAME
+
+
+def _load_env_file(path=None) -> list:
+    """把 ``config/.env`` 的 ``KEY=VALUE`` 补进 ``os.environ``，返回实际注入的键名列表。
+
+    纯标准库实现，容忍注释（``#``）、空行、``export `` 前缀、值两端引号、``=`` 两侧空白；
+    非法行静默跳过 —— 配置文件写错绝不应中断 kit 运行。只补未设置的键，显式 export 优先。
+    """
+    p = _env_file_path() if path is None else Path(path)
+    applied = []
+    try:
+        if not p.is_file():
+            return applied
+        for raw in p.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.lower().startswith("export "):
+                line = line[len("export "):].lstrip()
+            if "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key, val = key.strip(), val.strip()
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                continue
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+                val = val[1:-1]
+            if key in os.environ:  # 显式 export 优先，不覆盖
+                continue
+            os.environ[key] = val
+            applied.append(key)
+    except Exception:  # noqa: BLE001 —— 读配置失败不应阻断主流程
+        return applied
+    return applied
+
+
+def _bootstrap_env() -> list:
+    """加载 ``config/.env`` 并记录注入键名（供 doctor 展示）。
+
+    幂等：同一进程内只真正加载一次（``main()`` 会被 workflow 步骤分发重入），
+    保证 ``_ENV_FILE_APPLIED`` 不被后续调用清空。
+    """
+    global _ENV_FILE_APPLIED, _ENV_BOOTSTRAPPED
+    if not _ENV_BOOTSTRAPPED:
+        _ENV_FILE_APPLIED = _load_env_file()
+        _ENV_BOOTSTRAPPED = True
+    return _ENV_FILE_APPLIED
+
+
 def _ensure_workbench():
     """补齐 workbench 阶段子目录（幂等），保证新机 clone 后流水线目录开箱可用。"""
     for sub in WORKBENCH_SUBDIRS:
@@ -297,6 +364,50 @@ def cmd_overlaps(components, commands, capabilities):
         print("▶ 命令名重叠：无（分发无歧义）\n")
 
 
+def _component_version_check(name, data):
+    """比对组件三方版本（套件 manifest.version / VERSION 文件 / SKILL.md frontmatter）。
+
+    返回 (是否一致, manifest 版本, VERSION 版本, SKILL.md 版本)。任一方缺失不算不一致
+    （部分组件独立仓库无 VERSION 文件），但三方**同时存在却不同值**即为不一致。
+    """
+    comp = KIT_DIR / "components" / name
+    mani = str(data.get("version") or "").strip()
+    vfile = ""
+    vp = comp / "VERSION"
+    if vp.is_file():
+        try:
+            vfile = vp.read_text(encoding="utf-8").strip()
+        except Exception:  # noqa: BLE001
+            vfile = ""
+    vskill = ""
+    sp = comp / "SKILL.md"
+    if sp.is_file():
+        try:
+            m = re.search(r'^version:\s*["\']?([^"\'\s]+)', sp.read_text(encoding="utf-8"), re.M)
+            vskill = m.group(1) if m else ""
+        except Exception:  # noqa: BLE001
+            vskill = ""
+    seen = {v for v in (mani, vfile, vskill) if v}
+    return len(seen) <= 1, mani, vfile, vskill
+
+
+def _desen_stop_enabled():
+    """只读宿主 settings.json，返回已启用的 desen-stop 插件键列表（读取失败返回 None）。
+
+    desen-stop 是「文件分发 ≠ 平台生效」的钩子：bootstrap 第 6 步会写入 enabledPlugins，
+    但新机器/换宿主时容易漏启 —— doctor 主动提示，降低漏检。
+    """
+    p = Path.home() / ".workbuddy" / "settings.json"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 —— 文件缺失/不可解析都视为未知
+        return None
+    enabled = data.get("enabledPlugins")
+    if not isinstance(enabled, dict):
+        return []
+    return sorted(k for k, v in enabled.items() if v and "desen-stop" in k)
+
+
 def cmd_doctor(components):
     print("office-kit 环境与组件自检：\n")
     venv_py = _venv_python()
@@ -307,6 +418,15 @@ def cmd_doctor(components):
         ok = False
         print("  ✗ 虚拟环境缺失：%s" % venv_py)
         print("    → 请运行 ./bootstrap.sh（或 bootstrap.ps1）初始化。")
+    suite_ver = ""
+    svp = KIT_DIR / "VERSION"
+    if svp.is_file():
+        try:
+            suite_ver = svp.read_text(encoding="utf-8").strip()
+        except Exception:  # noqa: BLE001
+            suite_ver = ""
+    if suite_ver:
+        print("  ✓ 套件版本：v%s" % suite_ver)
     for name, data in sorted(components.items()):
         comp_path = KIT_DIR / "components" / name
         ver = data.get("version", "未声明")
@@ -322,6 +442,30 @@ def cmd_doctor(components):
             if mark == "✗":
                 ok = False
             print("      %s 入口 %s (%s)" % (mark, cmd.get("name"), entry))
+        vok, mani, vfile, vskill = _component_version_check(name, data)
+        if vok:
+            print("      ✓ 版本一致：%s" % (mani or vfile or vskill or "—"))
+        else:
+            ok = False
+            print("      ✗ 版本不一致：manifest=%s / VERSION=%s / SKILL.md=%s"
+                  % (mani or "-", vfile or "-", vskill or "-"))
+    print()
+    print("  ── 配置与平台生效 ──")
+    env_path = _env_file_path()
+    if env_path.is_file():
+        print("  ✓ 配置文件：%s（本次注入 %d 项；显式 export 的同名项不覆盖）"
+              % (env_path, len(_ENV_FILE_APPLIED)))
+    else:
+        print("  · 配置文件未创建：%s" % env_path)
+        print("    → 需要配置大模型/密钥时：cp %s.example %s 后填写（不进仓库）。" % (env_path, env_path))
+    plugins = _desen_stop_enabled()
+    if plugins is None:
+        print("  · desen-stop 插件状态：未读到宿主 settings.json（无法判定）")
+    elif plugins:
+        print("  ✓ desen-stop 已启用：%s" % ", ".join(plugins))
+    else:
+        print("  ⚠ desen-stop 未启用：文件已分发但平台未生效，脱敏停靠钩子不会触发。")
+        print("    → 运行 ./bootstrap.sh（第 6 步注册本地市场）或按 hooks/desen-stop/平台启用指引.md 手动启用。")
     print()
     print("自检结果：%s" % ("通过 ✅" if ok else "存在问题 ❌（可 kit.py check 诊断 / kit.py repair 在线修复）"))
 
@@ -1448,7 +1592,8 @@ HELP_TEXT = """office-kit 动态注册与分发器
 治理命令：
   list | -h | --help   列出全部已注册命令（含入口路径）
   overlaps             列出跨组件功能重叠（capabilities 标签比对）
-  doctor               环境与组件自检（venv 解释器 + 组件/入口完整性）
+  doctor               环境与组件自检（venv 解释器 + 组件/入口完整性 + 版本一致性
+                       + config/.env 状态 + desen-stop 平台启用）
   check [组件...]       检测组件完整性（本地）+ 版本（远程），只读不下载（--offline 仅本地）
   upgrade [组件...]     在线升级到远程最新版（--force 强制同步 / --yes 跳过确认）
   repair [组件...]      在线修复损坏/缺失组件（--yes 跳过确认）
@@ -1473,6 +1618,10 @@ HELP_TEXT = """office-kit 动态注册与分发器
 
 
 def main(argv=None):
+    # config/.env 最先加载：后续的远程源配置（OFFICE_KIT_REPO/BRANCH）、venv 覆写
+    # （OFFICE_KIT_VENV）、大模型/密钥（OLLAMA_HOST / OPENAI_API_KEY / ...）都依赖它。
+    # 只补未设置的变量，显式 export 优先；加载进 os.environ 后自动随子进程继承。
+    _bootstrap_env()
     argv = list(sys.argv[1:] if argv is None else argv)
     comps, cmds, caps = _discover_components()
     _ensure_workbench()

@@ -15,13 +15,17 @@
 
 | 平台 | 技能目录（推荐） | 触发方式 | 备注 |
 |---|---|---|---|
-| **WorkBuddy** | `~/.workbuddy/skills/doc-layout-aesthetics/` | 对话触发（描述含"排版/版面/美化/PDF"等触发词） | 默认宿主；支持腾讯文档云端路径 |
+| **WorkBuddy** | `~/.workbuddy/skills/doc-layout-aesthetics/` | 对话触发（描述含"排版/版面/美化/PDF"等触发词） | **S4 组件独立安装**；支持腾讯文档云端路径 |
 | **Claude Code** | `~/.claude/skills/doc-layout-aesthetics/` 或项目 `.claude/skills/` | `/skills` 或对话上下文 | 支持 `uv`；无 WorkBuddy 专属能力 |
 | **Codex（OpenAI）** | `~/.codex/skills/` 或项目 `.codex/skills/` | 对话上下文 / `$doc-layout-aesthetics` | 同上 |
 | **OpenClaw** | `~/.openclaw/skills/` 或工作区 `skills/` | 对话上下文 / 斜杠命令 | 同上 |
 
 > **各平台一致点**：技能本体 = `SKILL.md` + `references/` + `scripts/` + `tests/` + `pyproject.toml`，
 > 是**平台无关**的目录。任意平台只要把整个目录放到对应技能目录即可识别。
+>
+> ⚠️ **已装 office-kit 套件的机器无需按上表独立安装**：组件权威副本位于
+> `~/office-kit/components/doc-layout-aesthetics/`，统一经 `Skill: office-kit`（`kit.py`）分发；
+> `~/.workbuddy/skills/doc-layout-aesthetics/` 已退役。上表仅适用于 S4「仅组件独立部署」。
 
 ---
 

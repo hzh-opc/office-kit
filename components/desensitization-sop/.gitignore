@@ -16,6 +16,10 @@ desensitize_audit.md
 *.json.enc
 
 # Python 工具/缓存
+# 运行期缓存 / 临时（运行时自动重建，不入库）
+.cache/
+.tmp/
+
 .pytest_cache/
 
 # 本地开发资料（工作记忆/反馈/开发参考/测试套件，仅留本地，不进 git、不上远程）

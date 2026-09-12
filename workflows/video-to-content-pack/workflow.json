@@ -17,8 +17,8 @@
 
   "requires": {
     "components": ["info-extract"],
-    "envs": ["office-kit .venv（kit 分发自动使用）", "media 隔离环境（裁切/转换/去边）"],
-    "external_tools": ["ffmpeg（media 环境内置 imageio-ffmpeg 静态二进制即可）"]
+    "envs": ["office-kit .venv（kit 分发自动使用，含组件依赖）", "media 解释器（**可选**：仅需 ffmpeg 的裁切/转换/去边步骤使用；本机默认不存在，缺失时相关步骤明确报错并给创建指引，不静默失败）"],
+    "external_tools": ["ffmpeg（*_fallback 录制与裁切用；探测链：--param ffmpeg_bin > media_py 的 imageio_ffmpeg > ~/office-kit/.venv 的 imageio_ffmpeg > ~/.workbuddy/binaries/python/envs/media > 系统 ffmpeg）"]
   },
 
   "optional_capabilities": {
@@ -43,7 +43,7 @@
     "granularity":      { "default": "none", "desc": "切片粒度：none（仅单节交付）| transcript（按逐字稿时间线）| catalog（按课程目录）| product（按产品，电商）" },
     "copywriting":      { "default": "off", "desc": "是否产出文案：on | off（电商/带货场景置 on）" },
     "ffmpeg_bin":       { "default": "", "desc": "ffmpeg 二进制路径（*_fallback 录制用；留空则从 media 环境 imageio_ffmpeg 自动探测）" },
-    "media_py":         { "default": "~/.workbuddy/binaries/python/envs/media/bin/python", "desc": "media 隔离环境解释器（含 imageio_ffmpeg；用于 *_fallback 的 ffmpeg 探测与裁切/去边脚本）" },
+    "media_py":         { "default": "", "desc": "media 解释器（需含 imageio_ffmpeg；留空则按探测链自动找：~/office-kit/.venv → ~/.workbuddy/binaries/python/envs/media → 系统 ffmpeg）。本机默认无 media 环境时，涉及 ffmpeg 的步骤会明确报错并给出创建指引（不静默降级），见 2026-09-11 检查报告 P1-2" },
     "office_kit_root":  { "default": "", "desc": "office-kit 根目录（脚本步骤用；留空=kit 自身解析）" }
   },
 
@@ -99,8 +99,8 @@
 
     { "id": "ingest_live_fallback",
       "when": "source==live_fallback",
-      "uses": { "shell": "FF='{ffmpeg_bin}'; [ -z \"$FF\" ] && MP=$(eval echo {media_py}) && [ -n \"$MP\" ] && [ -x \"$MP\" ] && FF=$(\"$MP\" -c 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())' 2>/dev/null); [ -z \"$FF\" ] && FF=$(command -v ffmpeg 2>/dev/null); [ -z \"$FF\" ] && { echo '未找到 ffmpeg（请以 --param ffmpeg_bin=... 或 --param media_py=... 指定）'; exit 3; }; \"$FF\" -i '{source_uri}' -c copy '{workspace}/按章节/{section}/{section}_直播回放.mp4' && echo recorded -> '{workspace}/按章节/{section}/{section}_直播回放.mp4'" },
-      "desc": "来源=直播链接（降级）：media ffmpeg 先录制为本地回放文件（录制至直播结束），转写交 transcribe 步（蓝本 §1.1 临时方案；ffmpeg 探测链 ffmpeg_bin > media_py 的 imageio_ffmpeg > 系统 ffmpeg）" },
+      "uses": { "shell": "FF='{ffmpeg_bin}'; if [ -z \"$FF\" ]; then for MP in \"$(eval echo {media_py})\" \"$HOME/office-kit/.venv/bin/python\" \"$HOME/.workbuddy/binaries/python/envs/media/bin/python\"; do [ -n \"$MP\" ] && [ -x \"$MP\" ] && FF=$(\"$MP\" -c 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())' 2>/dev/null) && [ -n \"$FF\" ] && break; done; fi; [ -z \"$FF\" ] && FF=$(command -v ffmpeg 2>/dev/null); if [ -z \"$FF\" ]; then echo '未找到 ffmpeg（直播降级录制需要）。解决方式三选一：'; echo '  ① 指定二进制：--param ffmpeg_bin=/path/to/ffmpeg'; echo '  ② 指定含 imageio_ffmpeg 的解释器：--param media_py=/path/to/python'; echo '  ③ 创建 media 环境：uv venv ~/.workbuddy/binaries/python/envs/media && uv pip install --python ~/.workbuddy/binaries/python/envs/media/bin/python imageio-ffmpeg'; exit 3; fi; \"$FF\" -i '{source_uri}' -c copy '{workspace}/按章节/{section}/{section}_直播回放.mp4' && echo recorded -> '{workspace}/按章节/{section}/{section}_直播回放.mp4'" },
+      "desc": "来源=直播链接（降级）：media ffmpeg 先录制为本地回放文件（录制至直播结束），转写交 transcribe 步（蓝本 §1.1 临时方案；ffmpeg 探测链 ffmpeg_bin > media_py > ~/office-kit/.venv > envs/media > 系统 ffmpeg，全部落空则明确报错 + 创建指引，不静默失败）" },
 
     { "id": "ingest_device_fallback",
       "when": "source==device_fallback",
@@ -130,7 +130,7 @@
     { "id": "crop_shots",
       "executor": "agent",
       "checkpoint": "confirm",
-      "desc": "截图去边（蓝本 §2.4，media 环境）：先备份原图再保守裁剪（保 ≥55% 面积、单边 ≤200px），文件名不变", "writes": ["crop_manifest.json"] },
+      "desc": "截图去边（蓝本 §2.4，需 ffmpeg/media 解释器；按 params.media_py 探测链解析，缺失则先按报错指引创建）：先备份原图再保守裁剪（保 ≥55% 面积、单边 ≤200px），文件名不变", "writes": ["crop_manifest.json"] },
 
     { "id": "authoring",
       "executor": "agent",
@@ -165,7 +165,7 @@
       "when": "granularity!=none",
       "executor": "agent",
       "checkpoint": "confirm",
-      "desc": "执行裁切（蓝本 §4.5.3，media ffmpeg stream-copy）：输出目录按粒度参数化共存（小节_按目录/按转录/按产品），增量重切（plan vs manifest 比对），文件名用目录/产品标题保留别名", "writes": ["cut_manifest.json", "小节_*.mp4"] },
+      "desc": "执行裁切（蓝本 §4.5.3，ffmpeg stream-copy；按 params.media_py 探测链解析，缺失则先按报错指引创建）：输出目录按粒度参数化共存（小节_按目录/按转录/按产品），增量重切（plan vs manifest 比对），文件名用目录/产品标题保留别名", "writes": ["cut_manifest.json", "小节_*.mp4"] },
 
     { "id": "export_lists",
       "when": "granularity!=none",

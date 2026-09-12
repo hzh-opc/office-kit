@@ -180,7 +180,13 @@ python kit.py repair summarize --yes     # 修复指定组件
 - 路径全部相对/环境变量化，未写死绝对路径
 - `.venv` 不入库，按机器 `uv venv` + `uv add` 重建
 - 入口脚本分别提供 `sh`（Unix）与 `ps1`（Windows），venv 解释器路径按平台自动适配
-- 密钥经 `config/.env` 注入，不进仓库、不进对话
+- 密钥 / 大模型配置经 `config/.env` 注入：`cp config/.env.example config/.env` 后填写，
+  `kit.py` 启动时自动加载（**只补未设置的变量，显式 `export` 优先，绝不覆盖**），
+  并随子进程继承给各组件。`config/.env` 已被 `.gitignore` 排除，不进仓库、不进对话。
+  自定义路径用 `OFFICE_KIT_ENV_FILE`；查看生效状态用 `python kit.py doctor`。
+  ⚠️ 组件被直接裸跑（不经 `kit.py`）时不加载，此时请显式 `export`。
+- **模型权重 / 缓存为「用户级共享」**：`~/.ollama/models`、`~/.cache/huggingface`，
+  无需逐副本重复下载，也勿在项目内另建缓存目录（详见 `config/.env.example` §3）
 - **字体**：doc-layout 渲染依赖系统字体。跨平台首次使用请运行对应安装脚本
   （`components/doc-layout-aesthetics/fonts/install_fonts.{sh,ps1}`）；
   `md-pdf`（reportlab）内置 CJK 字体，无需额外安装即可输出中文 PDF

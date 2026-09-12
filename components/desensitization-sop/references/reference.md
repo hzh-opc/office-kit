@@ -331,7 +331,7 @@ v2.5.0 起**不再自动识别"公开主体"并豁免**——上市公司等也�
 - **运行环境**：`scripts/` 是一个 **uv 工程**（`pyproject.toml` 声明依赖），由 install.py 创建虚拟环境并安装 `cryptography / python-docx / openpyxl / python-pptx / pypdfium2 / pikepdf / msoffcrypto-tool / rapidocr / onnxruntime / charset-normalizer`；不污染系统或其他项目环境。
 - **解释器解析顺序（便携，跨 install / upgrade / 调用 / 测试一致）**：`DESEN_PYTHON`（直接指定解释器，复用现有环境、不新建 venv）→ `DESEN_VENV`（指定 venv 目录）→ `<技能目录>/scripts/.venv`（install.py 默认创建）→ 系统 `python3`。安装时亦可用 `install.py --venv <目录>` / `--python <路径>`（或对应环境变量）显式指定，指定后**绝不自动重建专属 `.venv`**。
 - **调用方式**：
-  - 默认（离线推荐）：`<技能目录>/scripts/.venv/bin/python <技能目录>/scripts/desensitize.py scan|run <输入> [--out ./desensitized --keys ./.desensitize_keys --mode hybrid|mask|token|redact --recursive --names 姓名清单.txt --cn-enhance]`（WorkBuddy 下 `<技能目录>` 为 `~/.workbuddy/skills/desensitization-sop`）
+  - 默认（离线推荐）：`<技能目录>/scripts/.venv/bin/python <技能目录>/scripts/desensitize.py scan|run <输入> [--out ./desensitized --keys ./.desensitize_keys --mode hybrid|mask|token|redact --recursive --names 姓名清单.txt --cn-enhance]`（`<技能目录>` 随部署场景而定：已装 office-kit 套件时为 `~/office-kit/components/desensitization-sop/`，走 `kit.py desen`；仅 S4「仅组件独立安装」时才是 `~/.workbuddy/skills/desensitization-sop`）
   - 复用现有环境：`DESEN_PYTHON=/path/to/python <技能目录>/scripts/desensitize.py scan|run <输入> [...]`（或 `DESEN_VENV=/path/to/venv`）
   - 或用 uv：`uv run --project <技能目录>/scripts python …`
 - **子命令**：

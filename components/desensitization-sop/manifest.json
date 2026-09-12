@@ -1,6 +1,6 @@
 {
   "component": "desensitization-sop",
-  "version": "2.11.1",
+  "version": "2.11.3",
   "dependencies": [],
   "display_name": "desensitization-sop 脱敏",
   "description": "本地脱敏（PII/密级/密钥），含自动解密与自动 OCR 后处理",
@@ -15,7 +15,9 @@
   "commands": [
     {
       "name": "desen",
-      "aliases": ["desensitization-sop"],
+      "aliases": [
+        "desensitization-sop"
+      ],
       "entry": "scripts/desensitize.py",
       "fallback": "none",
       "category": "抽取处理链",

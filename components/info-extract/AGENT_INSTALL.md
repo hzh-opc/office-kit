@@ -65,4 +65,4 @@ python tests/verify_phase7.py   # D16 交付物范式：纠正版稿件
 
 ## 6. 卸载
 
-删除技能目录（`~/.workbuddy/skills/info-extract` 软链与其指向的 `~/Repositories/info-extract`）即可；`.venv`/`.cache`/`.tmp` 均为可重建的本地产物。
+删除技能目录即可 —— **S4「仅组件独立安装」场景**下为 `~/.workbuddy/skills/info-extract` 软链与其指向的 `~/Repositories/info-extract`；**已装 office-kit 套件时**组件位于 `~/office-kit/components/info-extract/`，应卸载/移除套件，而非删本目录。`.venv`/`.cache`/`.tmp` 均为可重建的本地产物。

@@ -1,7 +1,7 @@
 ---
 name: info-extract
 description: "跨智能体、跨平台的信息抽取技能：本地优先抽取 OCR 文字 / 音频转录（语音转写、字幕）/ 视频文案 / 图片与视频画面解读 / 在线·加密视频文案 / 直播链接录制 / 视频采集设备摄取。七大能力均已实现（speech_transcription、video_transcript、ocr、image_understanding、video_online、live、capture；其中 video_online 含账号/合集枚举 + cookie 适配 + 防风控限速；live/capture 含边录边转 + 断流重连 + 健康探针 + 自动分段 + 统一摄取 manifest + 浏览器技能鉴权），默认本地处理、默认不上云，支持按类型自动路由与按需载入，可对接脱敏技能（DESEN）做上云前脱敏。触发词：提取文字 / 转录 / 转写 / 语音转文字 / 听写 / 字幕生成 / 视频文案 / 视频转文字 / 图片转文字 / 截图转文字 / 扫描件转文字 / PDF文字提取 / 画面解读 / 图片理解 / 图表解读 / 视频帧分析 / 在线视频 / 加密视频 / 账号视频 / 抖音 / 小红书 / bilibili / youtube / 直播录制 / 直播转文字 / 设备录制 / 摄像头录制 / 采集卡录制 / OBS 虚拟相机。"
-version: "0.6.3"
+version: "0.6.4"
 agent_created: true
 tags: [ocr, speech_transcription, video_transcript, image_understanding, video_online, video_online_enum, live, capture, 信息抽取, 转录, 字幕, 本地优先, 隐私, 直播, 设备录制, 抖音, 小红书, 账号视频]
 ---

@@ -48,10 +48,12 @@ powershell -ExecutionPolicy Bypass -File scripts\upgrade_skill.ps1   # Windows
 
 本技能是**平台无关**的目录结构（`SKILL.md` + `scripts/` + `references/` + `tests/` + `pyproject.toml`），可安装到：
 
-- **WorkBuddy**：`~/.workbuddy/skills/doc-layout-aesthetics/`（默认宿主，含腾讯文档路径）
+- **WorkBuddy**：`~/.workbuddy/skills/doc-layout-aesthetics/`（**仅 S4「组件独立安装」场景**；含腾讯文档路径）
 - **Claude Code**：`~/.claude/skills/` 或项目 `.claude/skills/`
 - **Codex（OpenAI）**：`~/.codex/skills/` 或项目 `.codex/skills/`
 - **OpenClaw**：`~/.openclaw/skills/` 或工作区 `skills/`
+
+> ⚠️ **本机已装 office-kit 套件时，不走上述独立安装**：组件权威副本位于 `~/office-kit/components/doc-layout-aesthetics/`，统一经 `Skill: office-kit`（`kit.py`）分发；`~/.workbuddy/skills/doc-layout-aesthetics/` 已退役。上表仅适用于 S4「仅组件独立部署」。
 
 详细步骤见 [`AGENT_INSTALL.md`](./AGENT_INSTALL.md)。
 

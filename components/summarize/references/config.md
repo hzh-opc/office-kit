@@ -1,7 +1,7 @@
 # summarize 技能 · 配置项说明（references/config.md）
 
 所有可选项均可在配置文件 `summarize.config.yaml` 中设置（或由智能体在对话中协助设置）。
-配置文件搜索顺序：`<当前工作区>/summarize.config.yaml` → `~/.workbuddy/skills/summarize/assets/summarize.config.yaml`（默认模板）。
+配置文件搜索顺序：`<当前工作区>/summarize.config.yaml` → **本技能** `assets/summarize.config.yaml`（默认模板）。模板实际位置随部署场景而定：office-kit 套件部署时为 `~/office-kit/components/summarize/assets/summarize.config.yaml`；仅 S4「仅组件独立安装」时为 `~/.workbuddy/skills/summarize/assets/summarize.config.yaml`。
 
 ## 顶层字段
 

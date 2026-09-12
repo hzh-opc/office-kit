@@ -1,14 +1,14 @@
 ---
 name: summarize
 description: "为长文本、文档、网页、OCR 识别稿、音频转录稿、视频文案提取稿等自动生成摘要、提取要点与关键词，支持自定义摘要长度。优先本地离线处理（零依赖、跨平台），并支持「云端取方法、本地处理信息」以省 TOKEN、护隐私；可与 desensitization-sop 协同完成脱敏/处理/回填/复核闭环。当用户要求「总结/摘要/概括/提炼要点/提取关键词/归纳」任意形态的长内容时，应使用本技能。"
-version: "1.0.0"
+version: "1.1.0"
 agent_created: true
 pip_dependencies: ["jieba"]
 ---
 
 # 智能摘要技能（summarize）
 
-> 版本 v1.0.0 · 署名 hzh.opc（由 WorkBuddy 协助实现） · 兼容智能体：WorkBuddy / Claude / Codex / OpenClaw 等 · 跨平台：Windows / macOS / Linux。
+> 版本 v1.1.0 · 署名 hzh.opc（由 WorkBuddy 协助实现） · 兼容智能体：WorkBuddy / Claude / Codex / OpenClaw 等 · 跨平台：Windows / macOS / Linux。
 
 ## 定位与目标
 

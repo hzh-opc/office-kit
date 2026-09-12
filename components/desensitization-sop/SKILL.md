@@ -1,13 +1,13 @@
 ---
 name: desensitization-sop
 description: "在执行任何可能接触敏感信息的任务之前（任务输入含文本/文件/数据库/知识库/代码等任一形态），自动检测输入是否含敏感信息（个人标识、财务/审计/投研数据、密钥 Token 等）；若检出 → 先本地脱敏再执行任务；若未检出 → 忽略、直接执行任务（零额外负担）。此外，当任务涉及将本地内容送至云端大模型（WorkBuddy 云端模型、OpenClaw、Claude、Codex、GPT 等）处理时，须在「上云前」自动执行脱敏自查，在「任务结束后」自动生成审计汇总。本文件仅含执行所必需的最小规则；判定依据、分级对照表、精度影响、工具部署等详述见同目录 references/reference.md（按需读取，不自动加载；GitHub 项目说明见 README.md）。"
-version: "2.11.1"
+version: "2.11.3"
 agent_created: true
 ---
 
 # 信息脱敏上云 SOP（AI Agent 上云前 / 上云后闭环）
 
-> **版本** v2.11.1（2026-08-23） · **署名** hzh.opc（Huang Zenghao，由 WorkBuddy 协助整理） · **版权** Copyright 2026 hzh.opc，基于 [Apache License 2.0](LICENSE) 发布（保留声明、标注修改、附 NOTICE）。
+> **版本** v2.11.3（2026-09-12） · **署名** hzh.opc（Huang Zenghao，由 WorkBuddy 协助整理） · **版权** Copyright 2026 hzh.opc，基于 [Apache License 2.0](LICENSE) 发布（保留声明、标注修改、附 NOTICE）。
 
 > **适用对象**：本技能主要面向**个人**与**企业**使用——含政府部门、事业单位、对数据安全有特别要求的企业等；此类组织 / 单位使用本技能时，**须遵循其适用的法律法规与内部数据安全管理规定**。无论哪类使用者，本技能均保证**全过程可追溯、可审计、可复核**。
 >
@@ -195,8 +195,8 @@ v2.5.0 起**不再自动识别"公开主体"并豁免**（上市公司也有未�
 
 ## 一键脱敏本地脚本
 
-位置：`<技能目录>/scripts/desensitize.py`（uv 工程，`pyproject.toml` 声明依赖，数据全程不出本机；WorkBuddy 下 `<技能目录>` 即 `~/.workbuddy/skills/desensitization-sop`）。
-- **解释器解析顺序**（便携，install / upgrade / 调用 / 测试一致）：`DESEN_PYTHON`（直接指定解释器，复用现有环境、不新建 venv）→ `DESEN_VENV`（指定 venv 目录）→ `<技能目录>/scripts/.venv`（install.py 默认创建）→ 系统 `python3`。
+位置：`<技能目录>/scripts/desensitize.py`（uv 工程，`pyproject.toml` 声明依赖，数据全程不出本机）。**`<技能目录>` 随部署场景而定**：已装 office-kit 套件时（S2/S3）为 `~/office-kit/components/desensitization-sop/`，经 `kit.py desen` 分发；仅 **S4「仅组件独立安装」** 场景才是 `~/.workbuddy/skills/desensitization-sop/`（本机 4 组件的用户级独立副本**已退役**，该目录不存在）。
+- **解释器解析顺序**（便携，install / upgrade / 调用 / 测试一致）：`DESEN_PYTHON`（直接指定解释器，复用现有环境、不新建 venv）→ `DESEN_VENV`（指定 venv 目录）→ **套件 venv**（`OFFICE_KIT_ROOT/.venv`，或已部署生产副本 `~/office-kit/.venv`；复用同一环境、不另建）→ `<技能目录>/scripts/.venv`（S4 独立安装默认创建）→ 系统 `python3`。
 - 调用：`<技能目录>/scripts/.venv/bin/python <技能目录>/scripts/desensitize.py <子命令> ...`；若复用现有环境则 `DESEN_PYTHON=/path/to/python <技能目录>/scripts/desensitize.py <子命令> ...`。
 - 快速指引：`... desensitize.py guide`（打印决策表与命令链）。
 
@@ -219,7 +219,7 @@ v2.5.0 起**不再自动识别"公开主体"并豁免**（上市公司也有未�
 - **豁免**：`--assume-public`/`--public-paths`/`--local-only`/`--local-paths`（见「豁免与边界」）。
 - **识别增强**：`--names` 姓名清单、`--cn-enhance` 中文姓名/地址/机构名、`--tabular-names` 表格列头英文姓名（CSV/TSV/xlsx）；**生僻字/特殊字符优先 mask**；**`--mapping` 用户自定义映射**（原始值→替换值，命中主动精确替换，加密入库不外发）。
 - **跨境识别（v2.8+ 内置）**：IBAN / SWIFT / VAT / 国际电话自动识别脱敏；多编码自动探测（GBK / Shift-JIS / BIG5 / cp1252）；全角数字归一；csv/json 内嵌密钥检测。
-- **密级/内部标记识别（v2.11.1 起拆两类）**：
+- **密级/内部标记识别（v2.11.3 起拆两类）**：
   - **`state_secret`（法定国家秘密等级标记）**——`【机密】`/`【绝密】`/`【秘密】`、`密级：机密`、`★机密` 等高置信格式。**按政策：一般企业/单位依法接触不到国家秘密载体**，命中此类标记即输出显式确认提醒（请用户确认是误用机密字眼、还是确属涉密载体；涉密载体须按保密规定线下处置、严禁上云）。脱敏掩码为 `[涉密标记]`（抹去具体等级），**不改变保密属性、不豁免保密责任**。
   - **`internal_mark`（企业内部标签）**——`【内部资料】`/`【内部文件】`/`（内参）` 等，非国家秘密，脱敏为 `[内部]`，不触发国家秘密确认提醒。
   - **纯语义的"内幕信息 / 未公开重大信息"无固定格式、无法靠正则可靠识别**，仍由「上云前自检清单 §6 证券/投研拦截项」人工把关。

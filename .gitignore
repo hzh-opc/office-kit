@@ -17,9 +17,13 @@ config/.env
 # 编辑/系统文件
 .DS_Store
 
-# 组件运行时缓存/测试残留（不入库）
+# 组件运行时缓存/测试残留（运行自动重建，不入库）
 components/**/_verify_cache_test.bin
 components/**/scripts/.cache_verify/
+# 组件运行期缓存 / 生成式测试夹具（2026-09-12 补）
+components/**/scripts/.cache/
+components/**/tests/fixtures/
+components/**/.tmp/
 
 # 工作流运行时状态（dry-run/运行产生，不入库）
 workflows/**/_state/

@@ -105,14 +105,6 @@ python kit.py repair                 # 修复损坏/缺失组件（默认：本�
 
 Components can also be upgraded independently (`python kit.py upgrade <component>`). After any upgrade, re-run `./bootstrap.sh` so the new dependency set is installed and the skills/hooks distribution is refreshed.
 
-## 5.5 Two-lib closed-loop payload slot（两库闭环载荷插槽）
-
-「两库闭环」= `config/` 与 `troubleshooting/` 两个治理知识库复制到 `<BASE>` 并通过五重校验（16 文件齐备 / frontmatter 四字段 `id/load_when/triggers/last_updated` / `<BASE>` 占位替换 / 无本机家目录绝对路径残留 / LF + UTF-8 无 BOM）。其载荷属**用户个人治理数据，不入上游仓库**；部署脚本 `deploy_two_libs.py`（Python 3.7+ 标准库、pathlib 跨平台、幂等，`--base/--check/--dry-run` 子命令）由部署提示词随附附件提供。接口约定：
-
-- 载荷目录结构：`<附件根>/两库闭环副本/{config,troubleshooting}/…`（16 文件 + `deploy_two_libs.py`）；
-- 调用：`python deploy_two_libs.py --base <BASE>`（幂等重跑安全；`--check` 只校验不写）；
-- 时机：`bootstrap.sh` 之后执行（第 5 步分发的 `<BASE>/skills/` 就位后），与 `deploy/machine_init.*`（机器级环境）先后无依赖。
-
 ## 6. Troubleshooting
 
 | 现象 | 看哪里 |

@@ -344,22 +344,38 @@ else:
       Write-Warning "      ⚠ 未找到 node：无法运行 codebuddy CLI，跳过 CLI 注册（插件处于假闸门状态）。"
       return
     }
-    $env:HOME = $env:USERPROFILE
-    $env:CODEBUDDY_CONFIG_DIR = "$env:USERPROFILE\.workbuddy"
-    if (-not $env:LANG) { $env:LANG = "zh_CN.UTF-8" }
-    if (-not $env:TERM) { $env:TERM = "dumb" }
-    $env:PATH = "$(Split-Path $node);$env:PATH"
-    # 剥离可能继承的 sandbox broker / 会话变量（2026-09-12 反馈 F2）：
-    # 根因同 bootstrap.sh 第 6 步 ③ —— 继承父环境的沙箱代理变量会让 CLI 静默挂起
-    # （macOS 实测 6 分钟无输出）。此处以通配前缀剥离，语义对齐 sh 版 env -i 白名单：
-    # 覆盖 CODEBUDDY_SANDBOX_*（含 BROKER_IPC_ADDRESS 等）、CODEBUDDY_BROKERED_*、
-    # CODEBUDDY_SESSION_ID、CLAUDE_SESSION_ID；仅删环境变量，不动文件与配置。
+    # ---- F5（2026-09-12 反馈）保存-还原模式（方案 A）----
+    # $env: 修改是进程级的，会污染调用者终端（sh 版 env -i 仅作用于子进程、父 shell 零影响）。
+    # 此处在函数开头保存将被删除/覆盖的全部变量原值（含"不存在"状态），函数体置于 try 中
+    # 执行，finally 无条件还原——污染窗口限制在函数执行期，父终端最终状态不变。
+    # 约束（防退化）：与 sh 版 env -i 白名单语义等价的 ps1 等价物 =「最小环境构造 + 用完还原」，
+    # 后续迭代不得改为不还原的进程级修改，也不得删除 finally 还原块。
+    # 根因（F2）：继承父环境的沙箱代理变量（CODEBUDDY_SANDBOX_* 等）会让 CLI 静默挂起
+    # （macOS 实测 6 分钟无输出）。
+    $savedEnv = @{}
+    foreach ($n in @("HOME","CODEBUDDY_CONFIG_DIR","LANG","TERM","PATH")) {
+      $savedEnv[$n] = if (Test-Path "Env:$n") { (Get-Item "Env:$n").Value } else { $null }
+    }
     Get-ChildItem Env: | Where-Object {
       $_.Name -like "CODEBUDDY_SANDBOX*" -or
       $_.Name -like "CODEBUDDY_BROKERED*" -or
       $_.Name -eq "CODEBUDDY_SESSION_ID" -or
       $_.Name -eq "CLAUDE_SESSION_ID"
-    } | ForEach-Object { Remove-Item "Env:$($_.Name)" -ErrorAction SilentlyContinue }
+    } | ForEach-Object { $savedEnv[$_.Name] = $_.Value }
+    try {
+      # 剥离沙箱/会话变量（黑名单族保留：sh 版白名单的 ps1 近似——被删变量已全部存档可还原）
+      Get-ChildItem Env: | Where-Object {
+        $_.Name -like "CODEBUDDY_SANDBOX*" -or
+        $_.Name -like "CODEBUDDY_BROKERED*" -or
+        $_.Name -eq "CODEBUDDY_SESSION_ID" -or
+        $_.Name -eq "CLAUDE_SESSION_ID"
+      } | ForEach-Object { Remove-Item "Env:$($_.Name)" -ErrorAction SilentlyContinue }
+      # 构造 CLI 所需最小环境
+      $env:HOME = $env:USERPROFILE
+      $env:CODEBUDDY_CONFIG_DIR = "$env:USERPROFILE\.workbuddy"
+      if (-not $env:LANG) { $env:LANG = "zh_CN.UTF-8" }
+      if (-not $env:TERM) { $env:TERM = "dumb" }
+      $env:PATH = "$(Split-Path $node);$env:PATH"
     Write-Host "      · CLI: $cli  (node: $node)"
     Write-Host "      · 注册本地市场: plugin marketplace add"
     & $node $cli plugin marketplace add "$MARKET_DIR" 2>&1 | ForEach-Object { "        $_" }
@@ -384,6 +400,13 @@ else:
     else { Write-Warning "      ⚠ cache 副本缺失：$cachep（CLI install 可能未生效）"; $ok = $false }
     if ($ok) { Write-Host "      ✅ desen-stop 已通过 CLI 真正注册并启用（重启会话后 Stop hook 生效）" }
     else { Write-Warning "      ⚠ 注册校验未全过；详见 troubleshooting/plugin-enable.md §3 / 平台启用指引.md" }
+    } finally {
+      # 无条件还原环境（F5 方案 A 核心）：父终端最终状态不变
+      foreach ($k in @($savedEnv.Keys)) {
+        if ($null -ne $savedEnv[$k]) { Set-Item -Path "Env:$k" -Value $savedEnv[$k] }
+        else { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
+      }
+    }
   }
   Register-DesenStopCli
 }

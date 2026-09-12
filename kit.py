@@ -427,6 +427,45 @@ def cmd_doctor(components):
             suite_ver = ""
     if suite_ver:
         print("  ✓ 套件版本：v%s" % suite_ver)
+    # 单一真相源校验（2026-09-12 反馈 D1）：技能正文只认 skills/office-kit/SKILL.md，根 SKILL.md 仅指针。
+    skill_dir = KIT_DIR / "skills" / "office-kit"
+    skill_md = skill_dir / "SKILL.md"
+    if skill_md.is_file():
+        skill_ver = _registry_version(skill_dir)
+        if suite_ver and skill_ver not in ("", "?"):
+            if skill_ver == suite_ver:
+                print("  ✓ 单一真相源：skills/office-kit/SKILL.md v%s 与套件 VERSION 一致" % skill_ver)
+            else:
+                ok = False
+                print("  ✗ 版本漂移：套件 VERSION=%s 但 skills/office-kit/SKILL.md version=%s"
+                      % (suite_ver, skill_ver))
+                print("    → 技能正文的唯一真相源是 skills/office-kit/SKILL.md，请把两者改到同一版本号。")
+        snap = _skill_snapshot_versions(skill_md)
+        drift = []
+        for cname, cdata in sorted(components.items()):
+            want = str(cdata.get("version") or "").strip()
+            got = snap.get(cname)
+            if want and got and got != want:
+                drift.append("%s(表=%s / manifest=%s)" % (cname, got, want))
+        if drift:
+            print("  ⚠ 组件版本快照表过时：%s" % "，".join(drift))
+            print("    → 更新 skills/office-kit/SKILL.md「组件版本快照」表（或跑 kit.py register）。")
+        elif snap:
+            print("  ✓ 组件版本快照表与 components/*/manifest.json 一致")
+    else:
+        ok = False
+        print("  ✗ 缺少技能正文：%s（唯一真相源；bootstrap 第 5a 步由此分发）" % skill_md)
+    root_skill = KIT_DIR / "SKILL.md"
+    if root_skill.is_file():
+        try:
+            rtxt = root_skill.read_text(encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            rtxt = ""
+        if ("薄指针" in rtxt) and not re.search(r'^version:\s', rtxt, re.M):
+            print("  ✓ 根 SKILL.md 为薄指针（不承载铁律正文与独立版本号，无双源倒挂风险）")
+        else:
+            print("  ⚠ 根 SKILL.md 疑似退化为独立副本（含 version: 或缺「薄指针」标记）"
+                  "——双源漂移风险，见 归档/反馈文档/20260912-office-kit-v0.2.2落地检查.md D1。")
     for name, data in sorted(components.items()):
         comp_path = KIT_DIR / "components" / name
         ver = data.get("version", "未声明")
@@ -509,6 +548,30 @@ _REGISTRY_TEMPLATES = {
         "upgrade": "随 office-kit 套件升级后重跑 bootstrap 第 6 步",
     },
 }
+
+
+def _skill_snapshot_versions(skill_md: Path):
+    """解析技能正文「组件版本快照」表，返回 {组件名: 版本}。
+
+    仅解析 `## 组件版本快照` 小节内的两列表格（组件名 | 版本），用于检出该表与
+    `components/*/manifest.json` 实际版本的漂移（2026-09-12 反馈 D1 同族：手写副本易过时）。
+    """
+    out = {}
+    p = Path(skill_md)
+    if not p.is_file():
+        return out
+    try:
+        txt = p.read_text(encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        return out
+    m = re.search(r'^##\s*组件版本快照\s*$(?P<body>.*?)(?=^##\s|\Z)', txt, re.M | re.S)
+    if not m:
+        return out
+    for line in m.group("body").splitlines():
+        row = re.match(r'^\|\s*([A-Za-z0-9_-]+)\s*\|\s*v?([0-9][^|\s]*)\s*\|\s*$', line.strip())
+        if row:
+            out[row.group(1)] = row.group(2)
+    return out
 
 
 def _registry_version(path: Path) -> str:
@@ -680,6 +743,28 @@ def cmd_verify(args):
         "缺失时可运行 bootstrap --inject-soul-rules（注入完整场景化模板，与检查关键词闭环）"
         "或按部署提示词 §④ 模板手工写入",
         fatal=False)
+    # 7) 单一真相源（2026-09-12 反馈 D1）：已分发技能版本 ↔ 套件 VERSION；根 SKILL.md 须为薄指针
+    suite_v = ""
+    try:
+        suite_v = (KIT_DIR / "VERSION").read_text(encoding="utf-8").strip()
+    except Exception:  # noqa: BLE001
+        pass
+    dep_skill = base / "skills" / "office-kit"
+    if dep_skill.is_dir() and suite_v:
+        dv = _registry_version(dep_skill)
+        add("技能版本 ↔ 套件 VERSION（单一真相源）", dv == suite_v,
+            "已分发 v%s / 套件 v%s%s" % (
+                dv, suite_v,
+                "" if dv == suite_v else "（已分发副本落后 → 重跑 bootstrap 同步）"))
+    root_skill = KIT_DIR / "SKILL.md"
+    if root_skill.is_file():
+        try:
+            rtxt = root_skill.read_text(encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            rtxt = ""
+        add("根 SKILL.md 为薄指针（防双源漂移）",
+            ("薄指针" in rtxt) and not re.search(r'^version:\s', rtxt, re.M),
+            str(root_skill), fatal=False)
 
     print("office-kit 部署验收（verify）：\n")
     fatal_fail = 0
@@ -1061,9 +1146,11 @@ def cmd_repair(components, args):
 
 # ---------------------------------------------------------------------------
 # 外发必扫 DESEN 铁律（套件反馈 P0-②）：分发层唯一外发门禁。
-# 「凡外发必先 desen scan，未扫即阻断」——DESEN 已装时强制前置扫描；未装时
-# 显式提醒 + 组件最小脱敏兜底，不随意阻断任务。详见套件 SKILL.md「外发必扫
-# DESEN 铁律」节与 归档/feedback/office-kit（套件）反馈·外发铁律审计.md。
+# 「凡外发必先 desen scan，未扫即阻断」——DESEN 已装时强制前置扫描，命中敏感
+# **一律先阻断 + 敏感信息确认卡**（2026-09-06 v2.2 统一闸门：显式/隐性不再区分
+# 严格度，仅确认卡措辞不同）；DESEN 未装时显式提醒 + 组件最小脱敏兜底，不随意阻断任务。
+# 规则正文的唯一真相源 = skills/office-kit/SKILL.md「外发必扫 DESEN 铁律」节；
+# 审计背景见 归档/反馈文档/20260903-office-kit（套件）反馈·外发铁律审计.md。
 # ---------------------------------------------------------------------------
 
 # 外发命令：把信息送出本机的命令（含隐性外发）。键=命令名，值=说明。
@@ -1071,17 +1158,23 @@ def cmd_repair(components, args):
 # 本处字典仅作「命令名 → 语义说明」的文案补充（供阻断/提示措辞使用），不再独立维护
 # 命令清单——新增外发能力只改 manifest，无需同步此字典，消除双源漂移。
 #
-# 外发语义（external_kind 区分两类，登记在 manifest 的 external_kind 字段）：
+# 外发语义（external_kind 区分两类，登记在 manifest 的 external_kind 字段；
+# 两类**均**走「先阻断 → 确认留痕 → 放行」，与 _external_gate 实现一致）：
 #  - explicit（显式外发，默认）：用户主动发起、明显上云/分享意图（如 tencent-doc 上传腾讯文档云端）。
-#    不主动脱敏，信息安全由用户与平台负责；但为防误发敏感信息，放行前做一次 desen scan，
-#    命中敏感则**提示**（不阻断），供用户确认。
-#  - implicit（隐性外发）：命令本身可能触发非用户明显意图的上云/联网（如 extract 识别稿外发、
-#    summarize 的翻译/TTS/联网补全）。命中敏感信息 → 硬阻断（allow=False），须先 desen run 再重试。
-#    逃生口 OFFICE_KIT_SKIP_EXTERNAL_GATE=1 显式跳过。
+#    命中敏感 → **先阻断**（allow=False）+ 显式外发·敏感信息确认卡（见 _fmt_explicit_note），
+#    告知「这是你的主动上云动作，信息安全由你与平台负责」；用户 `--confirm-raw`
+#    （或 OFFICE_KIT_CONFIRM_RAW=1）确认、并 `desen audit-log --decision raw` 留痕后放行。
+#  - implicit（隐性外发）：命令本身可能触发非用户明显意图的上云/联网。当前唯一登记项
+#    为 `extract`（识别稿外发，见 components/info-extract/manifest.json）。同样**先阻断 +
+#    确认卡**（高敏强调风险，见 _fmt_implicit_high；中低敏见 _fmt_implicit_consent）——
+#    高/中/低档均不再静默放行。
+#    （注：`summarize` 脚本本身零上云、**未**登记为本层外发命令；其翻译/TTS/联网补全等属
+#     SKILL.md 层智能体动作，由组件内统一确认闸口负责，不经 kit.py 分发。）
+#  - 逃生口 OFFICE_KIT_SKIP_EXTERNAL_GATE=1 显式跳过全部门禁。
 EXTERNAL_DESC = {
     "tencent-doc": "Markdown→腾讯文档云端（docs.qq.com）",
     "extract": "内容识别稿产出（可能含敏感信息，后续外发/分享须脱敏）",
-    "summarize": "摘要提炼（输入可能含敏感信息，翻译/TTS/联网补全等后续外发须脱敏）",
+    "summarize": "摘要提炼（本层未登记为外发命令，此处仅作文案兜底；其翻译/TTS/联网补全由组件内确认闸口负责）",
 }
 
 

@@ -1,7 +1,7 @@
 ---
 name: desensitization-sop
 description: "在执行任何可能接触敏感信息的任务之前（任务输入含文本/文件/数据库/知识库/代码等任一形态），自动检测输入是否含敏感信息（个人标识、财务/审计/投研数据、密钥 Token 等）；若检出 → 先本地脱敏再执行任务；若未检出 → 忽略、直接执行任务（零额外负担）。此外，当任务涉及将本地内容送至云端大模型（WorkBuddy 云端模型、OpenClaw、Claude、Codex、GPT 等）处理时，须在「上云前」自动执行脱敏自查，在「任务结束后」自动生成审计汇总。本文件仅含执行所必需的最小规则；判定依据、分级对照表、精度影响、工具部署等详述见同目录 references/reference.md（按需读取，不自动加载；GitHub 项目说明见 README.md）。"
-version: "2.11.3"
+version: "2.11.4"
 agent_created: true
 ---
 

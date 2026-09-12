@@ -1,7 +1,7 @@
 ---
 name: office-kit
 description: "合并办公工具包（元技能 / 编排层）：统一编排 info-extract（转录/OCR/视频文案/画面解读/文档文本提取）、desensitization-sop（本地脱敏）、summarize（摘要/提炼/关键词）、doc-layout-aesthetics（排版美化：Markdown→PDF/Word/PPT/HTML）四大组件。本地优先、隐私闭环、跨平台可移植。触发词：转录/转写/语音转文字/听写/字幕/提取文字/OCR/扫描件转文字/画面解读/图片理解/视频文案/视频转文字/在线视频/加密视频/抖音/小红书/bilibili/脱敏/去标识/PII/密级/密钥/摘要/提炼/要点/关键词/排版/美化/版面/Markdown转PDF/Word/PPT/HTML/PDF。办公类任务优先走本技能统一入口 kit.py，自动享受跨组件功能重叠仲裁与 extract→desen→summarize→doc-layout 流水线串联；子组件技能（info-extract 等）均已并入本技能，触发时一律走本统一入口。"
-version: "0.2.0"
+version: "0.2.3"
 agent_created: true
 tags: [office, transcription, ocr, video, desen, summarize, doc-layout, 办公, 转录, 脱敏, 摘要, 排版, 本地优先, 隐私, 跨平台]
 ---
@@ -89,11 +89,10 @@ $KIT/office-kit.sh tencent-doc 文章.md --title "标题"          # Markdown→
 
 | 组件 | 版本 |
 |------|------|
-| info-extract | 0.6.3 |
-| desensitization-sop | 2.11.1 |
-| summarize | 1.0.0 |
-| doc-layout-aesthetics | 1.0.0 |
-
+| info-extract | 0.6.4 |
+| desensitization-sop | 2.11.4 |
+| summarize | 1.1.0 |
+| doc-layout-aesthetics | 1.0.1 |
 ## 组件独立更新与可移植
 - 各组件位于 `components/<name>/`，可独立替换更新；`kit.py` 扫描 manifest 动态注册，无需改动分发逻辑。
 - 每个组件在 `manifest.json` 声明 `version`；`kit.py check` 检测损坏与远程新版本，`upgrade`/`repair` 在线下载修复，更新后自动重识能力并记录上下游对接（`workbench/logs/component-registry.json` + `component-events.log`），旧版归档到 `workbench/archive/components/`。

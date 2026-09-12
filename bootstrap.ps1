@@ -15,6 +15,8 @@
 #        - CLI 真正注册：plugin marketplace add + plugin install（剥离沙箱代理/会话变量，
 #          语义对齐 sh 版 env -i，详见 hooks/desen-stop/平台启用指引.md）；
 #          installed_plugins.json ∩ cache 副本 双校验
+#        - F5（2026-09-12 反馈）：剥离范围 = 前缀通配 CODEBUDDY* / CLAUDE*（贴近白名单语义），
+#          且全程「保存-还原」（try/finally）——父终端环境在脚本退出后必须与运行前一致。
 #   7) 可选（-InjectSoulRules）：把完整场景化常驻铁律（办公任务统一入口清单 +
 #      敏感信息外发检测四要素，--full-rules）幂等合并到 ~/.workbuddy/SOUL.md
 #      （复用 desensitization-sop/install.py 的跨源去重 + 幂等机制，
@@ -24,6 +26,9 @@
 #   本脚本第 5/6/7 步（含 F2 涉及的 CLI 注册、-InjectSoulRules）均未经 Windows 实机
 #   验证，本机开发环境为 macOS（无 pwsh）。验证时覆盖：第 5 步分发、第 6 步 CLI 注册
 #   + 双校验（观察是否仍有 CLI 挂起）、第 7 步 --full-rules 注入与幂等重跑。
+#   F5 还原行为验证：跑本脚本前后各执行 `(Get-ChildItem Env:).Count` 应一致；
+#   `CODEBUDDY_SESSION_ID` / `CLAUDE_SESSION_ID` 若原本存在应仍在、原本不存在应仍不存在；
+#   `HOME` 若原本不存在应仍不存在（ps1 的 $env: 是进程级，还原块必须生效）。
 #
 # 前置：已安装 uv（https://docs.astral.sh/uv/）。第 6 步写 settings.json 需 python。
 # 用法（PowerShell）：
@@ -352,54 +357,50 @@ else:
     # 后续迭代不得改为不还原的进程级修改，也不得删除 finally 还原块。
     # 根因（F2）：继承父环境的沙箱代理变量（CODEBUDDY_SANDBOX_* 等）会让 CLI 静默挂起
     # （macOS 实测 6 分钟无输出）。
+    # F5 问题 2 已闭环：剥离范围由「4 个定名」收紧为**前缀通配 CODEBUDDY\* / CLAUDE\***，
+    # 贴近 sh 版白名单语义（含未来新增的沙箱/会话变量），消除「黑名单漏项 → 仍被继承」的漂移风险。
     $savedEnv = @{}
     foreach ($n in @("HOME","CODEBUDDY_CONFIG_DIR","LANG","TERM","PATH")) {
       $savedEnv[$n] = if (Test-Path "Env:$n") { (Get-Item "Env:$n").Value } else { $null }
     }
-    Get-ChildItem Env: | Where-Object {
-      $_.Name -like "CODEBUDDY_SANDBOX*" -or
-      $_.Name -like "CODEBUDDY_BROKERED*" -or
-      $_.Name -eq "CODEBUDDY_SESSION_ID" -or
-      $_.Name -eq "CLAUDE_SESSION_ID"
-    } | ForEach-Object { $savedEnv[$_.Name] = $_.Value }
+    # 存档谓词与剥离谓词必须一致，否则 finally 无法精确还原（含"原本不存在"的变量）。
+    $isSandboxVar = { param($n) ($n -like "CODEBUDDY*") -or ($n -like "CLAUDE*") }
+    Get-ChildItem Env: | Where-Object { & $isSandboxVar $_.Name } |
+      ForEach-Object { $savedEnv[$_.Name] = $_.Value }
     try {
-      # 剥离沙箱/会话变量（黑名单族保留：sh 版白名单的 ps1 近似——被删变量已全部存档可还原）
-      Get-ChildItem Env: | Where-Object {
-        $_.Name -like "CODEBUDDY_SANDBOX*" -or
-        $_.Name -like "CODEBUDDY_BROKERED*" -or
-        $_.Name -eq "CODEBUDDY_SESSION_ID" -or
-        $_.Name -eq "CLAUDE_SESSION_ID"
-      } | ForEach-Object { Remove-Item "Env:$($_.Name)" -ErrorAction SilentlyContinue }
+      # 剥离沙箱/会话变量（谓词与上方存档一致；被删变量已全部存档，finally 可精确还原）
+      Get-ChildItem Env: | Where-Object { & $isSandboxVar $_.Name } |
+        ForEach-Object { Remove-Item "Env:$($_.Name)" -ErrorAction SilentlyContinue }
       # 构造 CLI 所需最小环境
       $env:HOME = $env:USERPROFILE
       $env:CODEBUDDY_CONFIG_DIR = "$env:USERPROFILE\.workbuddy"
       if (-not $env:LANG) { $env:LANG = "zh_CN.UTF-8" }
       if (-not $env:TERM) { $env:TERM = "dumb" }
       $env:PATH = "$(Split-Path $node);$env:PATH"
-    Write-Host "      · CLI: $cli  (node: $node)"
-    Write-Host "      · 注册本地市场: plugin marketplace add"
-    & $node $cli plugin marketplace add "$MARKET_DIR" 2>&1 | ForEach-Object { "        $_" }
-    Write-Host "      · 安装插件: plugin install"
-    & $node $cli plugin install "desen-stop@$MARKET_NAME" 2>&1 | ForEach-Object { "        $_" }
-    # 校验
-    $ok = $true
-    $ipf = "$env:USERPROFILE\.workbuddy\plugins\installed_plugins.json"
-    $cachep = "$env:USERPROFILE\.workbuddy\plugins\cache\$MARKET_NAME\desen-stop"
-    if (Test-Path $ipf) {
-      try {
-        $d = Get-Content $ipf -Raw | ConvertFrom-Json
-        $has = $false
-        if ($d.plugins) {
-          foreach ($k in $d.plugins.PSObject.Properties.Name) { if ($k -eq "desen-stop@$MARKET_NAME") { $has = $true } }
-        }
-        if ($has) { Write-Host "      ✓ installed_plugins.json 含 desen-stop@$MARKET_NAME" }
-        else { Write-Warning "      ⚠ installed_plugins.json 未含 desen-stop@$MARKET_NAME（CLI 注册可能未生效）"; $ok = $false }
-      } catch { Write-Warning "      ⚠ 读取 installed_plugins.json 失败: $_"; $ok = $false }
-    } else { Write-Warning "      ⚠ 未找到 installed_plugins.json"; $ok = $false }
-    if (Test-Path $cachep) { Write-Host "      ✓ cache 副本存在: $cachep" }
-    else { Write-Warning "      ⚠ cache 副本缺失：$cachep（CLI install 可能未生效）"; $ok = $false }
-    if ($ok) { Write-Host "      ✅ desen-stop 已通过 CLI 真正注册并启用（重启会话后 Stop hook 生效）" }
-    else { Write-Warning "      ⚠ 注册校验未全过；详见 troubleshooting/plugin-enable.md §3 / 平台启用指引.md" }
+      Write-Host "      · CLI: $cli  (node: $node)"
+      Write-Host "      · 注册本地市场: plugin marketplace add"
+      & $node $cli plugin marketplace add "$MARKET_DIR" 2>&1 | ForEach-Object { "        $_" }
+      Write-Host "      · 安装插件: plugin install"
+      & $node $cli plugin install "desen-stop@$MARKET_NAME" 2>&1 | ForEach-Object { "        $_" }
+      # 校验
+      $ok = $true
+      $ipf = "$env:USERPROFILE\.workbuddy\plugins\installed_plugins.json"
+      $cachep = "$env:USERPROFILE\.workbuddy\plugins\cache\$MARKET_NAME\desen-stop"
+      if (Test-Path $ipf) {
+        try {
+          $d = Get-Content $ipf -Raw | ConvertFrom-Json
+          $has = $false
+          if ($d.plugins) {
+            foreach ($k in $d.plugins.PSObject.Properties.Name) { if ($k -eq "desen-stop@$MARKET_NAME") { $has = $true } }
+          }
+          if ($has) { Write-Host "      ✓ installed_plugins.json 含 desen-stop@$MARKET_NAME" }
+          else { Write-Warning "      ⚠ installed_plugins.json 未含 desen-stop@$MARKET_NAME（CLI 注册可能未生效）"; $ok = $false }
+        } catch { Write-Warning "      ⚠ 读取 installed_plugins.json 失败: $_"; $ok = $false }
+      } else { Write-Warning "      ⚠ 未找到 installed_plugins.json"; $ok = $false }
+      if (Test-Path $cachep) { Write-Host "      ✓ cache 副本存在: $cachep" }
+      else { Write-Warning "      ⚠ cache 副本缺失：$cachep（CLI install 可能未生效）"; $ok = $false }
+      if ($ok) { Write-Host "      ✅ desen-stop 已通过 CLI 真正注册并启用（重启会话后 Stop hook 生效）" }
+      else { Write-Warning "      ⚠ 注册校验未全过；详见 troubleshooting/plugin-enable.md §3 / 平台启用指引.md" }
     } finally {
       # 无条件还原环境（F5 方案 A 核心）：父终端最终状态不变
       foreach ($k in @($savedEnv.Keys)) {

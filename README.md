@@ -28,6 +28,7 @@ office-kit/
 ├── hooks/                    # 安全钩子（desen-stop：Stop 时扫描外发动作的兜底检测）
 │   └── desen-stop/
 ├── skills/                   # 用户级技能资产（office-kit 元技能 + desen-trigger 触发壳，由 bootstrap.sh 强制部署到 ~/.workbuddy/skills/）
+│   ├── office-kit/           #   元技能正文**唯一真相源**（SKILL.md：触发词/编排/外发铁律）；根 SKILL.md 仅为薄指针
 │   └── desen-trigger/        #   跨场景 DESEN 触发壳（非办公场景的敏感/外发闸门入口）
 ├── office-kit.sh             # 统一入口（macOS / Linux）
 ├── office-kit.ps1            # 统一入口（Windows）
@@ -39,6 +40,8 @@ office-kit/
 │   └── machine_init.ps1      #   Windows：同上（步序一致）
 └── ogit                      # git 包装器（统一入口，已配置免锁）
 ```
+
+> **技能正文的单一真相源（防双源漂移）**：office-kit 元技能的正文只有一份——`skills/office-kit/SKILL.md`（触发词 / 路由定位 / 编排说明 / 外发必扫 DESEN 铁律 / 展示规范）。仓库根 `SKILL.md` 自 v0.2.3 起降级为**薄指针**（不承载铁律正文、不带独立版本号）：此前双源曾出现「根文件版本号更高（0.2.2）而铁律口径更旧（提示不阻断 vs 实际先阻断）」的倒挂。该文件 `version` 与套件 `VERSION` 保持一致，`kit.py doctor` / `verify` 会校验，`kit.py doctor` 另会检出「组件版本快照表」与 `components/*/manifest.json` 的漂移。
 
 ## 环境要求
 

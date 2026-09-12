@@ -60,15 +60,17 @@ unzip /tmp/ok.zip -d /tmp && cd /tmp/office-kit-main
    - auto-generate `~/.workbuddy/skills-registry.md` via `kit.py register`（幂等；`<!-- 人工备注 -->` 区块保留；新机器无须手工按 6 字段登记）;
 6. **register local marketplace + CLI 真启用 desen-stop** (three sub-steps required for the plugin to actually execute):
    ① build marketplace under `~/.workbuddy/plugins/marketplaces/<市场>/` and write `"desen-stop@<市场>": true` into `~/.workbuddy/settings.json.enabledPlugins` (idempotent + auto backup);
-   ② run CLI `plugin marketplace add` + `plugin install` (must use `env -i` clean env; detail `hooks/desen-stop/平台启用指引.md`);
+   ② run CLI `plugin marketplace add` + `plugin install` in a **sanitized child env**（sh：`env -i` 白名单；ps1：剥离 `CODEBUDDY*` / `CLAUDE*` 前缀变量并「保存-还原」调用者环境，`try/finally`）——继承沙箱代理变量会让 CLI 静默挂起；detail `hooks/desen-stop/平台启用指引.md`;
    ③ double-validate: `installed_plugins.json` contains `desen-stop@<市场>` AND `plugins/cache/<市场>/desen-stop/<version>/` exists.
-7. **(optional, behind `--inject-soul-rules`)** inject the resident "input-detection gate" rule into `~/.workbuddy/SOUL.md`, via `components/desensitization-sop/install.py --memory-file ~/.workbuddy/SOUL.md --skip-venv --skip-tests` (reuses desen's idempotent + cross-source dedup mechanism; default OFF so this script never silently rewrites the user's identity file).
+7. **(optional, behind `--inject-soul-rules`)** inject the resident "input-detection gate" rule into `~/.workbuddy/SOUL.md`, via `components/desensitization-sop/install.py --memory-file ~/.workbuddy/SOUL.md --full-rules --skip-venv --skip-tests` (reuses desen's idempotent + cross-source dedup mechanism; `--full-rules` writes the complete scenario-based rule set so `kit.py verify`'s SOUL check is satisfied; default OFF so this script never silently rewrites the user's identity file).
+
+> **技能正文只有一个真相源**：`skills/office-kit/SKILL.md`（触发词 / 编排 / 外发铁律 / 展示规范）。仓库根 `SKILL.md` 自 v0.2.3 起为**薄指针**（无铁律正文、无独立版本号）；其 `version` 应与套件 `VERSION` 同步，`kit.py doctor` / `verify` 会校验。改技能行为请只改 `skills/office-kit/SKILL.md`，不要动根文件。
 
 ## 3. Verify
 
 ```bash
 ./bootstrap.sh                # idempotent; exits 0 when everything is ready; 收尾自动跑 verify
-python kit.py verify          # 统一部署验收闸门：组件 + 分发 + desen-stop 平台生效四校验 + registry + SOUL 铁律（警告级）
+python kit.py verify          # 统一部署验收闸门：组件 + 分发 + desen-stop 平台生效四校验 + registry + SOUL 铁律（警告级）+ 技能版本单一真相源 + 根 SKILL.md 指针态
 python kit.py doctor          # 环境 / 组件自检（venv、版本一致性、.env 状态、enabledPlugins）
 ls ~/.workbuddy/plugins/installed_plugins.json | xargs -I{} grep -c "desen-stop" {}   # 应 ≥1
 ls ~/.workbuddy/plugins/cache/hzh-local/desen-stop/                                    # 应有执行副本

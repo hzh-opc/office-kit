@@ -1,8 +1,8 @@
 {
   "workflow": "video-to-content-pack",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "title": "视频转内容包工作流",
-  "description": "视频内容（录屏/直播/自媒体/采集设备）→ 修正版逐字稿 + 交付文档（多形态，嵌去边截图）+ 多粒度切片视频 + 检索清单 + 文案 + 精排 PDF。机械环节由本工作流自带脚本 tools/vcp.py 承担（runner 直跑、跨平台、可续跑），创作环节由 Agent 按蓝本执行（runner 记状态 + 确认门 + 产物 sha256 指纹）。环境统一复用套件虚拟环境 ~/office-kit/.venv（不自建 venv）。",
+  "description": "视频内容（录屏/直播/自媒体/采集设备）→ 修正版逐字稿 + 交付文档（多形态，嵌去边截图）+ 多粒度切片视频 + 检索清单 + 文案 + 精排 PDF。机械环节由本工作流自带脚本 tools/vcp.py 承担（runner 直跑、跨平台、可续跑），创作环节由 Agent 按蓝本执行（runner 记状态 + 确认门 + 产物 sha256 指纹）。环境统一复用套件虚拟环境 ~/office-kit/.venv（不自建 venv）。v0.5.0 新增「幻灯片价值分类（纯文字页不截图）／锚点自检与最佳帧建议／命名规范与名实一致核对／跨节状态自动汇总」四道机械门，verify 升级为 6 项门禁。",
   "blueprint_doc": "./蓝本.md",
   "blueprint_note": "人类可读蓝本，随工作流分发（跨平台跨设备可复用）；与 workflow.json / illustration-spec.md / tools/vcp.py 同包。步骤章节引用见 state_schema 与各步 desc。",
 
@@ -52,6 +52,12 @@
     "deliverable_render": { "default": "pdf",      "desc": "交付物渲染：off | pdf。pdf 时用 doc-layout 的 md-pdf 把 Markdown 交付物渲染为中文精排 PDF（含封面，图片按相对路径内联）" },
     "cloud_upload":       { "default": "off",      "desc": "云端交付：off | tencent。tencent 时用 doc-layout 的 tencent-doc 上传腾讯文档（**显式外发**，命中敏感由 kit 外发闸门先阻断）" },
     "desen_gate":         { "default": "on",       "desc": "外发前本地脱敏扫描闸门：on | off。on 时交付物在交付前强制经 desen scan（SOUL.md 外发必扫铁律），命中敏感即阻断" },
+    "slide_classify":     { "default": "on",       "desc": "幻灯片价值分类（W9）：on | off。on 时对选中帧判定「知识承载型 / 纯文字型（封面·目录·总结·过渡·条目页）」，纯文字页建议在交付文档中转 Markdown 文字版、不生成截图（判据：文字页特征 + 画面墨量 ≤ slide_ink_max）" },
+    "slide_ink_max":      { "default": "0.12",     "desc": "纯文字页的墨量上限（0~1，越小越严）：画面中与主色差异显著的像素占比超过此值即视为含照片/图解，保留截图（默认 0.12）" },
+    "anchor_window":      { "default": "10",       "desc": "锚点自检 / 最佳帧建议的抽样窗口（秒）：对每条 ▶ 锚点在 ±窗口内取帧并按 OCR 关键词匹配度排序（W11/W13，默认 10）" },
+    "naming_check":       { "default": "on",       "desc": "命名规范与名实一致核对（W2/W10）：on | off。on 时校验截图文件名符合「第NN节_图MM_描述.ext」且章号/图号零填充，并把文件名描述词与画面 OCR 文本比对，0 命中即告警" },
+    "naming_ocr":         { "default": "on",       "desc": "命名核对的画面 OCR 开关：on | off。on 较慢（逐图 OCR，带缓存可续跑）但能抓「文件名与画面错位」；off 只做纯字符串的命名规范校验" },
+    "coverage_min_chars": { "default": "200",      "desc": "「知识点段无配图」告警的字数门槛（W7）：长度超过此字数且无图的 H3 知识点段列告警（软项，不阻断交付）" },
     "whisper_model":      { "default": "",         "desc": "转录模型：留空=组件默认（small）；术语密集/口音重场景可显式提到 medium（需本地模型缓存）" },
     "device_duration":    { "default": "0",        "desc": "降级录制时长（秒）：0=不限（直播录到结束/Ctrl-C）；仅 live_fallback / device_fallback 使用。原生 device 路径由组件默认 3600s 硬超时兜底" },
     "ffmpeg_bin":         { "default": "",         "desc": "ffmpeg 二进制路径（留空则按探测链自动解析：套件 venv 的 imageio_ffmpeg > media 环境 > 系统 PATH）" }
@@ -63,7 +69,10 @@
       "run_context.json":          { "owner": "precheck",         "consumers": ["index_records"], "ref": "蓝本 §0.3" },
       "ingestion_manifest.json":   { "owner": "index_records",    "consumers": ["authoring", "cut_plan"], "ref": "蓝本 §1.1" },
       "transcript_meta.json":      { "owner": "index_records",    "consumers": ["digest", "authoring", "cut_plan"], "ref": "蓝本 §1.2" },
-      "frame_index.json":          { "owner": "index_records",    "consumers": ["frames_ocr", "frame_pick", "illustrate"], "ref": "蓝本 §2.1（历史名 unique_states.json 已废，因其推演输入 states.tsv 并不存在）" },
+      "frame_index.json":          { "owner": "index_records",    "consumers": ["frames_ocr", "frame_pick", "classify_slides", "anchor_check", "illustrate"], "ref": "蓝本 §2.1（历史名 unique_states.json 已废，因其推演输入 states.tsv 并不存在）" },
+      "slide_class.json":          { "owner": "classify_slides",  "consumers": ["frame_pick", "illustrate", "verify"], "ref": "蓝本 §2.5 / illustration-spec（W9 幻灯片价值分类器）" },
+      "anchor_check.json":         { "owner": "anchor_check",     "consumers": ["illustrate", "verify"], "ref": "蓝本 §2.6（W11 最佳帧建议 / W13 锚点自检）" },
+      "naming_report.json":        { "owner": "name_check",       "consumers": ["verify"], "ref": "蓝本 §2.7（W2 命名规范 / W10 名实一致）" },
       "digest.json":               { "owner": "digest",           "consumers": ["authoring"], "ref": "蓝本 §3.4" },
       "ocr_review.json":           { "owner": "frames_ocr",       "consumers": ["frame_pick", "copywriting"], "ref": "蓝本 §2.3" },
       "crop_manifest.json":        { "owner": "crop_shots",       "consumers": ["verify"], "ref": "蓝本 §2.4" },
@@ -80,7 +89,8 @@
       "render_manifest.json":      { "owner": "render",          "consumers": ["verify"], "ref": "蓝本 §5.1" },
       "cloud_manifest.json":       { "owner": "cloud_upload",    "consumers": ["user"], "ref": "蓝本 §5.1" },
       "desen_report.json":         { "owner": "desen_gate",      "consumers": ["verify"], "ref": "蓝本 §0.7（外发必扫铁律）" },
-      "verify_report.json":        { "owner": "verify",          "consumers": ["user"], "ref": "蓝本 §6" }
+      "verify_report.json":        { "owner": "verify",          "consumers": ["consolidate", "user"], "ref": "蓝本 §6（6 项门禁；failed=硬失败 / warned=软告警）" },
+      "aggregated_sections.json":  { "owner": "consolidate",     "consumers": ["user"], "ref": "蓝本 §5.4（W6 跨节状态汇总；落 `_work/` 根，**不**写 runner 独占的 pipeline_state.json）" }
     }
   },
 
@@ -158,10 +168,19 @@
       "writes": ["_work/*/ocr_review.json", "_work/*/frame_index.json"],
       "desc": "帧 OCR：对 frame_index 选中帧逐帧独立子进程调 extract --type ocr（subprocess-per-image 防内存累积 OOM + 断点续跑），回填 ocr_text/ocr_head → ocr_review.json（蓝本 §2.3 / 配图规范 §六-8）" },
 
+    { "id": "classify_slides",
+      "when": "slide_classify==on",
+      "uses": { "script": "tools/vcp.py", "args": [
+        "classify-slides", "--workspace", "{workspace}", "--section", "{section}",
+        "--ink-max", "{slide_ink_max}"
+      ] },
+      "writes": ["_work/*/slide_class.json"],
+      "desc": "幻灯片价值分类器（W9）：逐帧判「知识承载型 / 纯文字型（封面·目录·总结·过渡·条目页）」——文字页特征 + 画面墨量双信号，墨量高者一律保留截图；纯文字页建议在交付文档转 Markdown 文字版、不生成截图 → slide_class.json（蓝本 §2.5 / illustration-spec）" },
+
     { "id": "frame_pick",
       "executor": "agent",
       "checkpoint": "confirm",
-      "desc": "选帧与命名归位（蓝本 §2.2 + 配图规范 §三-2/四）：读 frame_index + ocr_review + 逐字稿正文，按「最贴切」选出要进交付文档的帧（相似度只是筛子不是裁判，须逐张核对画面=文件名=图注=正文四一致），复制并命名为 课程交付/讲义截图/第NN节_图MM_描述.{png|jpg}；电商场景可加 商品/价签 锚点标签（供按产品切片定位）",
+      "desc": "选帧与命名归位（蓝本 §2.2 + 配图规范 §三-2/四）：读 frame_index + ocr_review + slide_class + 逐字稿正文，按「最贴切」选出要进交付文档的帧（**slide_class 判为 text_only 的帧不截图**，改在交付文档中转 Markdown 文字版），逐张核对「画面=文件名=图注=正文」四一致，复制并命名为 课程交付/讲义截图/第NN节_图MM_描述.{png|jpg}（**章号/图号零填充、无空格与特殊字符、描述由画面 OCR 内容驱动**——不得仅凭段落主题猜名）；电商场景可加 商品/价签 锚点标签（供按产品切片定位）",
       "writes": ["课程交付/讲义截图/*.png", "课程交付/讲义截图/*.jpg"] },
 
     { "id": "crop_shots",
@@ -172,14 +191,31 @@
     { "id": "authoring",
       "executor": "agent",
       "checkpoint": "confirm",
-      "desc": "修正版逐字稿 + 交付文档（蓝本 §3/§3.4/§3.6）：术语替换表修正、标 ▶ 时间节点；按 params.deliverable_types 写各形态交付文档（多形态并存）；速览/关键词取自 digest.json；一次性提取 transcript_headers.json（供阶段四消费，不重复解析）；落 delivery_spec.json（形态/模板/生成时间）",
+      "desc": "修正版逐字稿 + 交付文档（蓝本 §3/§3.4/§3.6）：① 术语替换表以**结构化围栏块**承载（`<!-- vcp:glossary begin -->`…`<!-- vcp:glossary end -->`，每行 `原词 → 修正词`），下游审计显式跳过该块，避免把「识别原词」误判为残留误识（W14）；② 标 `▶ mm:ss` 时间节点，并**把知识点段的时间码内联下传至交付文档**——讲义↔视频双向跳转，交付文档锚点数不得为 0（W1）；③ 交付文档与修正版**文首内置降级/未校对声明占位**（逐字稿未经纠正模型校对时须显式声明，W3）；④ 讲义「易错点速查」标 [高频]/[低频]、「关键词自测」标 [记忆]/[理解]/[应用]（W8）；⑤ **完整时间轴不塞进讲义**——讲义只留一行指针，完整表由 export 步派生为独立交付物 `课程交付/视频时间轴与来源说明.md`（W12）；⑥ 按 params.deliverable_types 写各形态交付文档（多形态并存），速览/关键词取自 digest.json；一次性提取 transcript_headers.json（供阶段四消费，不重复解析）；落 delivery_spec.json（形态/模板/生成时间）",
       "writes": ["课程交付/逐字稿_修正版/*.md", "课程交付/讲义/*.md", "_work/*/transcript_headers.json", "_work/*/delivery_spec.json"] },
+
+    { "id": "anchor_check",
+      "uses": { "script": "tools/vcp.py", "args": [
+        "anchor-check", "--workspace", "{workspace}", "--section", "{section}",
+        "--window", "{anchor_window}"
+      ] },
+      "writes": ["_work/*/anchor_check.json"],
+      "desc": "锚点自检 + 最佳帧建议（W13/W11）：解析修正版（或转录成品）的 `▶ mm:ss` / `[mm:ss]` 锚点，在 ±anchor_window 秒内取帧、按「标题/正文关键词 vs 该帧 OCR 文本」打分——给每条锚点标 ok / drift（疑似漂移或截到相邻页）/ no_frame，并给出 `best`（建议采用的最佳帧）→ anchor_check.json。illustrate 与 verify 据此纠漂重截（蓝本 §2.6）" },
 
     { "id": "illustrate",
       "executor": "agent",
       "checkpoint": "confirm",
-      "desc": "交付文档配图（蓝本 §3.7 / illustration-spec）：把已去边截图按三条标准（内容匹配 / 数量按需 / 密集合成）+ 图文位置判据（A 真错位 / B 多图堆叠 / C 图先于文 / D 裸图堆叠 均硬违例必须为 0；E 类合法例外放行）插入交付文档对应位置；不改写正文、不重抽帧；登记 illustration_index.json 供 verify 跨检",
+      "desc": "交付文档配图（蓝本 §3.7 / illustration-spec）：把已去边截图按三条标准（内容匹配 / 数量按需 / 密集合成）+ 图文位置判据（A 真错位 / B 多图堆叠 / C 图先于文 / D 裸图堆叠 均硬违例必须为 0；E 类合法例外放行）插入交付文档对应位置；**纯文字页（slide_class 判 text_only）转为 Markdown 列表/缩进/引用块呈现、不插图**，原图移入 课程交付/讲义截图_文字页替代/；**最佳截取以 anchor_check.json 的 best 候选为准**（目标帧 OCR 不含锚点核心词则在 ±窗口内改用匹配度最高的帧重截，重截须追加 recaptured 审计字段）；不改写正文、不重抽帧；登记 illustration_index.json 供 verify 跨检",
       "writes": ["_work/*/illustration_index.json"] },
+
+    { "id": "name_check",
+      "when": "naming_check==on",
+      "uses": { "script": "tools/vcp.py", "args": [
+        "name-check", "--workspace", "{workspace}", "--section", "{section}",
+        "--ocr", "{naming_ocr}"
+      ] },
+      "writes": ["_work/*/naming_report.json"],
+      "desc": "命名规范 + 文件名↔画面一致性核对（W2/W10）：① 校验截图文件名符合「第NN节_图MM_描述.ext」且章号/图号零填充、无空格与特殊字符；② 对每张交付截图 OCR（subprocess-per-image + 缓存续跑），把文件名描述词与 illustration_index 的 anchor_para 跟画面 OCR 文本比对，0 命中即告警「名实疑似不符」→ naming_report.json（verify 门禁 2 消费）" },
 
     { "id": "copywriting",
       "when": "copywriting==on",
@@ -218,7 +254,7 @@
     { "id": "export",
       "uses": { "script": "tools/vcp.py", "args": ["export", "--workspace", "{workspace}", "--section", "{section}", "--granularity", "{granularity}"] },
       "writes": ["课程交付/*.csv", "课程交付/*.md", "_work/*/export_manifest.json"],
-      "desc": "导出清单/索引/汇总（蓝本 §5，**无论粒度均执行**，修正历史上 granularity=none 时文案汇总与交付索引永不导出的缺陷）：全部由 cut_manifest + catalog/product_catalog + copywriting + 交付目录派生（utf-8-sig CSV + MD），含 课程交付/README.md 交付总索引" },
+      "desc": "导出清单/索引/汇总（蓝本 §5，**无论粒度均执行**，修正历史上 granularity=none 时文案汇总与交付索引永不导出的缺陷）：全部由 cut_manifest + catalog/product_catalog + copywriting + 交付目录派生（utf-8-sig CSV + MD），含 课程交付/README.md 交付总索引（配图数为**磁盘/索引实际计数**，杜绝手工填写错漏 W5）+ 课程交付/视频时间轴与来源说明.md（**独立交付物**：来源与合规 + 章节时间轴 + 切片对照，W12）" },
 
     { "id": "render",
       "when": "deliverable_render!=off",
@@ -240,8 +276,13 @@
 
     { "id": "verify",
       "checkpoint": "confirm",
-      "uses": { "script": "tools/vcp.py", "args": ["verify", "--workspace", "{workspace}", "--section", "{section}", "--granularity", "{granularity}", "--desen-gate", "{desen_gate}", "--deliverable-render", "{deliverable_render}", "--ffmpeg-bin", "{ffmpeg_bin}"] },
+      "uses": { "script": "tools/vcp.py", "args": ["verify", "--workspace", "{workspace}", "--section", "{section}", "--granularity", "{granularity}", "--desen-gate", "{desen_gate}", "--deliverable-render", "{deliverable_render}", "--coverage-min-chars", "{coverage_min_chars}", "--ffmpeg-bin", "{ffmpeg_bin}"] },
       "writes": ["_work/*/verify_report.json"],
-      "desc": "机械校验 + 人工放行（蓝本 §6）：截图引用零缺失/零冗余、段数一致（磁盘=CSV=索引）、每段时长误差 <5s、工作记录链完整、备份链齐全、外发扫描已通过、Markdown 均已出 PDF —— 机械项全通过后，语义判据（图文位置 A/B/C/D 为 0、配图三条标准、交付文档结构、文案合规）由确认门交用户确认 → verify_report.json" }
+      "desc": "机械校验（**6 项门禁**，W15）+ 人工放行（蓝本 §6）：① 引用完整性（零缺失/零冗余/纯文字页未被当截图引用）；② 命名规范与名实一致（章号·图号零填充 + 文件名↔画面 OCR）；③ 最佳截取核对（锚点漂移数须为 0）；④ 配图覆盖（≥coverage_min_chars 字的 H3 段须有图）；⑤ 时间锚点下传（交付文档内联 ▶ 不得为 0）；⑥ 记录链/备份链/切片时长/外发扫描/PDF/配图索引一致。**硬项不达标 exit 3 阻断交付**，软项（W7/W10 类启发式判据）显式告警不阻断；语义判据（图文位置 A/B/C/D 为 0、配图三条标准、交付文档结构、文案合规）仍由确认门交用户确认 → verify_report.json" },
+
+    { "id": "consolidate",
+      "uses": { "script": "tools/vcp.py", "args": ["consolidate", "--workspace", "{workspace}", "--section", "{section}"] },
+      "writes": ["_work/aggregated_sections.json", "课程交付/00_课程总览_索引.md"],
+      "desc": "跨节状态自动汇总（W6/W5）：扫描 `_work/*/` 各节的记录链完整度 + verify 结论 + 配图实际计数 → `_work/aggregated_sections.json`，并把「课程总览自动汇总」表以标记块（`<!-- vcp:auto-index:begin/end -->`）幂等写入 课程交付/00_课程总览_索引.md（**配图数取磁盘实际计数，杜绝手工错填**；标记块外的人工内容一律保留）。**不回写 pipeline_state.json**——该文件由 runner 每步整体覆写，脚本写入会被覆盖（蓝本 §5.4）" }
   ]
 }

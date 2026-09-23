@@ -70,6 +70,34 @@ KIT_PY = Path(os.environ.get("OFFICE_KIT_PY") or sys.executable)
 RE_D13_FRAME = re.compile(r"^frame_(\d+)_(\d+)\.png$")            # frame_0006_00.png → 6.00s
 RE_KEYFRAME = re.compile(r"^.+_kf_\d+_(\d+)\.png$")               # <stem>_kf_001_600.png → 6.00s
 RE_MD_IMG = re.compile(r"!\[[^\]]*\]\(<?([^)>]+)>?\)")
+# 截图命名约定（蓝本 §0.5/§2.2/§3.7）：第NN节_图MM_中文短描述.{png|jpg}，章号/图号零填充
+RE_SHOT_NAME = re.compile(r"^第(\d{2,3})节_图(\d{2,3})_(.+)\.(png|jpe?g)$", re.I)
+# 视频时间锚点（蓝本 §3.1）：▶ **MM:SS** / ▶ **HH:MM:SS**
+RE_ANCHOR = re.compile(r"▶\s*\*{0,2}\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\s*\*{0,2}")
+# 转录成品逐字稿的行首时间码（info-extract 输出格式：`[MM:SS] 文本`；无 ▶ 时的兜底锚点源）
+RE_TS_LINE = re.compile(r"^\s*\[(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\]\s*")
+RE_MD_HEAD = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.M)
+# 章节号提取（容忍 第7章 / 第07章 / 第7节 三种写法）
+RE_CHAPTER = re.compile(r"^\s*第\s*(\d+)\s*[章节]")
+# 「有意义的 OCR 文本」判据：至少 1 个汉字，或 2 个以上连续英数。
+# 纯图/构图页 OCR 常只吐标点噪声（如 `_\n_\n_`），这类不算「可核对」，
+# 否则文件名↔画面核对会大面积假告警（W10 门禁可信度前提）。
+RE_MEANINGFUL = re.compile(r"[\u4e00-\u9fff]|[A-Za-z0-9]{2,}")
+# 自动汇总区标记（consolidate 幂等改写，绝不覆盖人工内容）
+INDEX_BEGIN = "<!-- vcp:auto-index:begin -->"
+INDEX_END = "<!-- vcp:auto-index:end -->"
+
+# 通用小标题（画面多半只写课程/课件名，不含这类词）——命中失败时不作「漂移」结论，避免误报
+GENERIC_HEADINGS = frozenset({"开场", "引言", "前言", "介绍", "导入", "概述", "正文", "结语", "结束",
+                              "收尾", "导论", "引入", "背景", "本节", "本课"})
+
+# 关键词停用词（锚点/命名核对时过滤口语与结构词）
+_STOP = frozenset("""
+的 了 是 和 与 在 有 我 你 他 她 它 这 那 一个 我们 你们 他们 就是 什么 怎么 可以 这个 那个
+然后 因为 所以 但是 如果 已经 还是 不是 没有 时候 这样 一样 非常 其实 大家 可能 需要 知道 看到
+觉得 东西 问题 视频 课程 本节 这一 一张 第一 第二 第三 以及 而且 只是 还有 比如 例如 那么 这么
+一些 一下 部分 内容 图片 截图 例子 情况 时候 地方 上面 下面 里面 出来 起来 进去 一下
+""".split())
 
 
 class VcpError(Exception):
@@ -111,6 +139,127 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# 共用文本 / 图像判据（配图分类、锚点核对、命名一致性共用，2026-09-23 新增）
+# ---------------------------------------------------------------------------
+
+def chapter_digits(name: str) -> str:
+    """取字符串里的章节号（去前导零）；用于跨零填充写法匹配同名章节。
+
+    `第7章_用光` / `第07章_图01_x.jpg` → `"7"`；无章节号 → `""`。
+    """
+    m = RE_CHAPTER.match(name or "")
+    return (m.group(1).lstrip("0") or "0") if m else ""
+
+
+def tokens(text: str) -> list:
+    """抽取关键词候选：中文连续串（≥2 字）+ 英文/数字词（≥2 字符），去停用词。"""
+    out = []
+    for m in re.finditer(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9_&+.-]{1,}", text or ""):
+        t = m.group(0).strip("、，。：；！？·()（）【】[]《》\"'")
+        if len(t) < 2 or t in _STOP or t.isdigit():
+            continue
+        out.append(t)
+    return out
+
+
+def kw_hit(kw: str, text: str) -> bool:
+    """关键词命中判定：整词子串命中；长词（≥5 字）另允许 3 字窗口命中（容忍 OCR 噪声）。"""
+    if not kw or not text:
+        return False
+    if kw in text:
+        return True
+    if len(kw) >= 5:
+        return any(text.find(kw[i:i + 3]) >= 0 for i in range(len(kw) - 2))
+    return False
+
+
+def ocr_lines(text: str) -> list:
+    """把 OCR 文本切成「行」：兼容 `\\n`（boxes_to_text）与 ` | `（历史工程脚本）。"""
+    raw = text or ""
+    parts = raw.split("\n") if "\n" in raw else raw.split(" | ")
+    return [p.strip() for p in parts if p and p.strip()]
+
+
+def ink_ratio(path: Path, size: int = 96, quant: int = 32, dist: int = 60) -> float:
+    """画面「墨量」＝与主色差异显著的像素占比（0~1）。
+
+    用途：区分「纯文字幻灯片」（底色占绝对多数、墨量低）与「含照片/图解的画面」
+    （墨量高）。96×96 缩放后固定 9216 像素；用 `tobytes()` 取原始字节（不依赖
+    Pillow 已弃用的 `getdata()`，Pillow 12 实测无告警）。
+    """
+    from PIL import Image  # type: ignore
+    from collections import Counter
+    im = Image.open(path).convert("RGB").resize((size, size))
+    raw = im.tobytes()
+    q = Counter((raw[i] // quant, raw[i + 1] // quant, raw[i + 2] // quant)
+                for i in range(0, len(raw), 3))
+    bg0 = q.most_common(1)[0][0]
+    bg = (bg0[0] * quant, bg0[1] * quant, bg0[2] * quant)
+    diff = 0
+    for i in range(0, len(raw), 3):
+        if (abs(raw[i] - bg[0]) + abs(raw[i + 1] - bg[1]) + abs(raw[i + 2] - bg[2])) > dist:
+            diff += 1
+    return diff / (size * size)
+
+
+def parse_anchors(md_text: str) -> list:
+    """解析逐字稿里的视频时间锚点。
+
+    两种来源：① 修正版约定 `▶ **MM:SS**` / `▶ **HH:MM:SS**`（蓝本 §3.1）；
+    ② 无 ▶ 时退回转录成品的行首时间码 `[MM:SS] 文本`（info-extract 输出格式）。
+    每条记录：`time_sec` / `timecode` / `heading`（最近一个 Markdown 标题，作
+    「锚点核心关键词」来源）/ `body`（锚点同行或紧随正文，作辅助关键词来源）/
+    `mode`（`arrow`＝有标题可依，`ts`＝仅正文、关键词精度较低）。
+    """
+    lines = (md_text or "").splitlines()
+    mode = "arrow" if RE_ANCHOR.search(md_text or "") else "ts"
+    head_at, cur = {}, ""
+    for i, ln in enumerate(lines):
+        m = RE_MD_HEAD.match(ln)
+        if m:
+            cur = m.group(2).strip()
+        head_at[i] = cur
+    out = []
+    for i, ln in enumerate(lines):
+        m = RE_TS_LINE.match(ln) if mode == "ts" else RE_ANCHOR.search(ln)
+        if not m:
+            continue
+        h, mm, ss = m.group(1), m.group(2), m.group(3)
+        t = (int(h) * 3600 if h else 0) + int(mm) * 60 + int(ss)
+        body = ln[m.end():].strip(" *|　-—")
+        if not body:
+            body = next((x.strip() for x in lines[i + 1:i + 4] if x.strip()), "")
+        out.append({
+            "time_sec": t,
+            "timecode": ("%02d:" % int(h) if h else "") + "%02d:%02d" % (int(mm), int(ss)),
+            "heading": head_at.get(i, ""),
+            "body": body[:120],
+            "line_no": i + 1,
+            "mode": mode,
+        })
+    return out
+
+
+def collect_records(rec_dir: Path, kind: str, digits: str = "") -> list:
+    """列出某节在交付目录下的文件（按章节号过滤）。
+
+    匹配规则：**带章节号的文件**只保留与本节同号的；**不带章节号的文件**
+    （如 `讲义.md`）无法判归属，一律保留——这是「无章节号时按全部」的
+    可解释形态。**注意**：不可写成 `hit or files` 那种「匹配为空则回退全部」，
+    否则多节工作区里无自有文件的节会把别节文件全吞进来（实测 第08节 误计
+    第07节 的 4 张配图）。
+    """
+    if not rec_dir.is_dir():
+        return []
+    files = sorted(p for p in rec_dir.glob(kind) if p.is_file())
+    if digits:
+        plain = [p for p in files if not chapter_digits(p.name)]
+        hit = [p for p in files if chapter_digits(p.name) == digits]
+        return hit + plain
+    return files
+
+
 class Ctx:
     """工作区路径集合（蓝本 §7 目录结构的唯一实现处）。"""
 
@@ -125,6 +274,7 @@ class Ctx:
         self.sub_transcript = self.deliver / "逐字稿_修正版"
         self.sub_doc = self.deliver / "讲义"
         self.shots = self.deliver / "讲义截图"
+        self.shots_text = self.deliver / "讲义截图_文字页替代"
         self.shots_bak = self.deliver / "讲义截图_原始备份"
         self.pdf = self.deliver / "PDF"
 
@@ -136,6 +286,7 @@ class Ctx:
             self.sub_transcript,
             self.sub_doc,
             self.shots,
+            self.shots_text,
             self.shots_bak,
             self.pdf,
         ] + [self.chapter / d for d in GRANULARITY_DIR.values()]
@@ -143,6 +294,33 @@ class Ctx:
     # 记录链路径
     def rec(self, name: str) -> Path:
         return self.work / name
+
+    def shots_files(self) -> list:
+        """交付截图清单（`讲义截图/` 下 png/jpg，去边后的成品图）。"""
+        if not self.shots.is_dir():
+            return []
+        return sorted(p for p in self.shots.iterdir()
+                      if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+
+    def find_anchor_doc(self, explicit: str = "") -> tuple:
+        """定位含视频时间锚点的逐字稿：显式指定 > 修正版逐字稿 > 转录成品逐字稿。
+
+        返回 `(Path | None, 来源说明)`。修正版在 `课程交付/逐字稿_修正版/`，
+        成品逐字稿在 `_work/<节>/交付/`——两处都按章节号匹配本节的文档
+        （兼容 `第7章` 与 `第07章` 两种零填充写法）。
+        """
+        if explicit:
+            p = Path(explicit).expanduser()
+            if not p.is_file():
+                raise VcpError("指定的锚点文档不存在：%s" % explicit)
+            return p, "显式指定"
+        d = chapter_digits(self.section)
+        for base, tag in ((self.sub_transcript, "修正版逐字稿"),
+                          (self.work / "交付", "转录成品逐字稿")):
+            hit = collect_records(base, "*.md", d)
+            if hit:
+                return hit[0], tag
+        return None, ""
 
 
 def kit_call(args, *, capture=True, check=False):
@@ -763,7 +941,8 @@ def cmd_frames_ocr(a) -> int:
             if proc.returncode != 0 or not arch.is_file():
                 failed += 1
                 review.append({"frame_id": f["frame_id"], "hit": False, "ocr_text": "",
-                               "score": None, "error": "OCR 失败（rc=%s）" % proc.returncode})
+                               "score": None, "num_boxes": None,
+                               "error": "OCR 失败（rc=%s）" % proc.returncode})
                 continue
             done += 1
         data = read_json(arch, {}) or {}
@@ -771,7 +950,8 @@ def cmd_frames_ocr(a) -> int:
         fields = data.get("fields") or {}
         score = data.get("confidence", fields.get("avg_confidence"))
         review.append({"frame_id": f["frame_id"], "hit": bool(text), "ocr_text": text,
-                       "ocr_head": text[:60], "score": score, "error": ""})
+                       "ocr_head": text[:60], "score": score,
+                       "num_boxes": fields.get("num_boxes"), "error": ""})
         f["ocr_text"] = text
         f["ocr_head"] = text[:60]
 
@@ -997,6 +1177,26 @@ def cmd_export(a) -> int:
     for p in pdfs:
         lines.append("| 精排 PDF | `%s` | %.1f KB |" % (p.name, p.stat().st_size / 1024))
 
+    # 配图核对（W5：配图数一律由磁盘/记录实际计数，杜绝手工填写错漏）
+    ill = read_json(ctx.rec("illustration_index.json"), None)
+    if isinstance(ill, dict):
+        ill = ill.get("items")
+    text_pages = sorted(p for p in ctx.shots_text.iterdir()
+                        if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg")) \
+        if ctx.shots_text.is_dir() else []
+    refs = set()
+    for md in transcript_docs + deliver_docs:
+        for m in RE_MD_IMG.finditer(md.read_text(encoding="utf-8")):
+            refs.add(m.group(1).strip())
+    lines += ["", "## 配图核对（自动计数，勿手工填写）", "",
+              "| 项 | 数量 |", "|---|---|",
+              "| 磁盘截图（`讲义截图/`） | %d |" % len(shots),
+              "| 交付文档引用（去重） | %d |" % len(refs),
+              "| 文字页替代（`讲义截图_文字页替代/`，不计入截图） | %d |" % len(text_pages)]
+    if ill is not None:
+        active = [e for e in ill if isinstance(e, dict) and not e.get("text_replaced")]
+        lines.append("| 配图索引有效条目（`illustration_index.json`） | %d |" % len(active))
+
     if meta.get("items"):
         lines += ["", "## 转录概览", "", "| 文件 | 时长(秒) | 语言 | 段落数 | 置信度 |", "|---|---|---|---|---|"]
         for it in meta["items"]:
@@ -1083,6 +1283,41 @@ def cmd_export(a) -> int:
             if body:
                 (ctx.deliver / dst_name).write_text(str(body), encoding="utf-8")
                 written.append(str(ctx.deliver / dst_name))
+
+    # 视频时间轴与来源说明（W12：列为**独立交付物**，讲义只留一行指针，不把大表塞进每章）
+    ing = read_json(ctx.rec("ingestion_manifest.json"), {}) or {}
+    tl = ["# %s · 视频时间轴与来源说明" % ctx.section, "",
+          "> 由工作流 `video-to-content-pack` 于 %s 自动派生（源头记录见 `_work/%s/`）。"
+          % (now_iso(), ctx.section),
+          "> 讲义正文只保留内联 `▶ MM:SS` 轻锚点 + 一行指针，**完整时间轴以本文件为准**。", "",
+          "## 一、来源与合规", "", "| 项 | 值 |", "|---|---|",
+          "| 来源类型 | `%s` |" % (ing.get("source_type") or "—"),
+          "| 来源地址 / 设备描述符 | `%s` |" % (ing.get("source_uri") or "—"),
+          "| 摄取方法 | %s |" % (ing.get("method") or "—"),
+          "| 归一化文件 | `%s` |" % (ing.get("normalized_file") or "—"),
+          "| 时长(秒) | %s |" % (ing.get("duration_sec") if ing.get("duration_sec") is not None else "—"),
+          "| 获取时间 | %s |" % (ing.get("fetched_at") or "—"),
+          "", "> %s" % (ing.get("compliance") or "—"), ""]
+    adoc, atag = ctx.find_anchor_doc()
+    anchors = parse_anchors(adoc.read_text(encoding="utf-8")) if adoc else []
+    if anchors:
+        tl += ["## 二、章节时间轴（源：%s `%s`，共 %d 条锚点）" % (atag, adoc.name, len(anchors)), "",
+               "| # | 时间码 | 小节 | 对应内容节选 |", "|---|---|---|---|"]
+        for i, an in enumerate(anchors, 1):
+            body = (an["body"] or "—").replace("|", "／")[:40]
+            tl.append("| %d | `%s` | %s | %s |"
+                      % (i, an["timecode"], (an["heading"] or "—").replace("|", "／")[:24], body))
+        tl.append("")
+    if cm.get("items"):
+        tl += ["## 三、切片对照（粒度 `%s`，共 %d 段）" % (cm.get("granularity"), len(cm["items"])), "",
+               "| # | 文件名 | 起(秒) | 止(秒) | 时长(秒) | 依据 |", "|---|---|---|---|---|---|"]
+        for i, it in enumerate(cm["items"], 1):
+            tl.append("| %d | `%s` | %.1f | %.1f | %.1f | %s |"
+                      % (i, it["filename"], it["start"], it["end"], it["duration"], it.get("basis", "")))
+        tl.append("")
+    tl_path = ctx.deliver / "视频时间轴与来源说明.md"
+    tl_path.write_text("\n".join(tl) + "\n", encoding="utf-8")
+    written.append(str(tl_path))
 
     write_json(ctx.rec("export_manifest.json"), {
         "section": ctx.section, "generated_at": now_iso(),
@@ -1252,6 +1487,408 @@ def cmd_desen_gate(a) -> int:
 # 子命令：verify（机械校验；语义判据由 verify 步的确认门交用户/Agent）
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# 子命令：classify-slides（幻灯片价值分类器 —— 文字页不截图，2026-09-23 新增）
+# ---------------------------------------------------------------------------
+
+# 纯文字页特征（封面 / 目录 / 总结 / 过渡 / 条目页）
+TEXT_PAGE_PATTERNS = (
+    ("toc", re.compile(r"目录|CONTENTS|课程大纲|课程内容|本课内容|本节内容|内容提要|课程结构|课程安排")),
+    ("summary", re.compile(r"小[结节]|总结|回顾|要点|综上所述|本节课我们|我们学习了|谢谢观看|感谢观看|"
+                           r"感谢收看|下节课|预告|思考题|结语|再见")),
+    ("cover", re.compile(r"课程封面|入门篇|进阶篇|系列课|讲师|主讲|授课|第\s*\d+\s*课|课时安排")),
+)
+
+
+def _classify_one(text: str, num_boxes, ink, a) -> tuple:
+    """判定单帧为 `knowledge`（知识承载型）还是 `text_only`（纯文字型）。
+
+    回退链：OCR 文本特征（subtype）→ 结构特征（boxes/行数/短行比）→ 墨量复核。
+    **墨量是唯一否决项**：判定为文字页特征但墨量高（含照片/图解）时仍归
+    `knowledge`，宁可多留图也不漏知识画面（与「相似度只是筛子不是裁判」同源）。
+    """
+    lines = ocr_lines(text)
+    chars = len(re.sub(r"\s", "", text or ""))
+    nb = num_boxes if isinstance(num_boxes, int) else len(lines)
+    short_ratio = (sum(1 for l in lines if len(l) <= 18) / len(lines)) if lines else 0.0
+    ink_val = 0.0 if ink is None else ink
+
+    subtype = ""
+    for name, pat in TEXT_PAGE_PATTERNS:
+        if pat.search(text or ""):
+            subtype = name
+            break
+    if not subtype:
+        if nb <= 3 and chars <= 24:
+            subtype = "transition"
+        elif len(lines) >= 3 and short_ratio >= 0.8 and nb <= int(a.list_box_max):
+            subtype = "item_list"
+
+    texty = bool(subtype) and chars <= a.char_max and nb <= a.box_max
+    if texty and ink_val <= a.ink_max:
+        return "text_only", subtype, "文字页特征（%s）+ 墨量 %.3f ≤ %.3f" % (subtype, ink_val, a.ink_max)
+    if texty:
+        return "knowledge", subtype, ("疑似文字页（%s）但墨量 %.3f > %.3f：画面含照片/图解，保留截图"
+                                     % (subtype, ink_val, a.ink_max))
+    return "knowledge", subtype, "无文字页特征（boxes=%s chars=%d ink=%.3f）" % (nb, chars, ink_val)
+
+
+def cmd_classify_slides(a) -> int:
+    ctx = Ctx(a.workspace, a.section)
+    idx = read_json(ctx.rec("frame_index.json"), None)
+    if idx is None:
+        raise VcpError("缺少 frame_index.json（请先执行 index-records）")
+    rev = read_json(ctx.rec("ocr_review.json"), {}) or {}
+    ocr = {it.get("frame_id"): it
+           for it in ((rev.get("items") if isinstance(rev, dict) else rev) or [])}
+    frames = [f for f in (idx.get("frames") or []) if f.get("selected")]
+
+    base = {"section": ctx.section, "generated_at": now_iso(),
+            "thresholds": {"ink_max": a.ink_max, "box_max": a.box_max,
+                           "char_max": a.char_max, "list_box_max": a.list_box_max},
+            "note": "分类是**建议**不是裁判：text_only（纯文字/封面/目录/总结/过渡/条目页）建议在交付文档中"
+                    "转为 Markdown 文字版、不生成截图；判为 knowledge 但 review_required=true 的仍须人眼复核。"
+                    "判据见蓝本 §2.5 / illustration-spec「幻灯片价值分类器」。"}
+    if not frames:
+        write_json(ctx.rec("slide_class.json"), dict(base, stats={"total": 0, "knowledge": 0, "text_only": 0},
+                                                     items=[], text_only=[]))
+        log("  · 无可分类帧（frame_index 为空或无选中帧），跳过")
+        return 0
+
+    items, texty, warn = [], [], ""
+    for f in frames:
+        o = ocr.get(f["frame_id"], {})
+        text = o.get("ocr_text") or f.get("ocr_text") or ""
+        nb = o.get("num_boxes")
+        ink = None
+        try:
+            ink = ink_ratio(Path(f["path"]))
+        except Exception as exc:  # noqa: BLE001
+            warn = "（墨量计算不可用：%s）" % exc
+        kind, subtype, reason = _classify_one(text, nb, ink, a)
+        entry = {"frame_id": f["frame_id"], "path": f["path"],
+                 "timestamp_sec": f.get("timestamp_sec"), "kind": kind, "subtype": subtype,
+                 "ink_ratio": None if ink is None else round(ink, 4),
+                 "num_boxes": nb, "char_count": len(re.sub(r"\s", "", text)),
+                 "ocr_head": text[:60], "reason": reason,
+                 "review_required": subtype in ("cover", "transition", "item_list")}
+        items.append(entry)
+        if kind == "text_only":
+            texty.append(entry)
+
+    write_json(ctx.rec("slide_class.json"), dict(
+        base, stats={"total": len(items), "knowledge": len(items) - len(texty), "text_only": len(texty)},
+        items=items, text_only=[e["frame_id"] for e in texty]))
+    log("  ✓ 幻灯片价值分类：%d 帧 → 知识承载 %d / 纯文字 %d（省下约 %d 张截图）%s"
+        % (len(items), len(items) - len(texty), len(texty), len(texty), warn))
+    for e in texty[:12]:
+        log("      · [%s] %s @%.1fs %s" % (e["subtype"], Path(e["frame_id"]).name,
+                                           e["timestamp_sec"] or -1, e["ocr_head"][:28]))
+    if len(texty) > 12:
+        log("      · …另有 %d 帧，详见 slide_class.json" % (len(texty) - 12))
+    log("  → 建议：text_only 帧在交付文档中转为 Markdown 列表/缩进/引用块呈现，并移入 "
+        "课程交付/讲义截图_文字页替代/（不生成截图，蓝本 §3.7 / illustration-spec 三-2）")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# 子命令：anchor-check（锚点自检 + 最佳帧建议，2026-09-23 新增）
+# ---------------------------------------------------------------------------
+
+def cmd_anchor_check(a) -> int:
+    ctx = Ctx(a.workspace, a.section)
+    idx = read_json(ctx.rec("frame_index.json"), None)
+    if idx is None:
+        raise VcpError("缺少 frame_index.json（请先执行 index-records）")
+    rev = read_json(ctx.rec("ocr_review.json"), {}) or {}
+    ocr = {it.get("frame_id"): it
+           for it in ((rev.get("items") if isinstance(rev, dict) else rev) or [])}
+    frames = [f for f in (idx.get("frames") or [])
+              if f.get("selected") and f.get("timestamp_sec") is not None]
+
+    doc, tag = ctx.find_anchor_doc(getattr(a, "doc", "") or "")
+    base = {"section": ctx.section, "generated_at": now_iso(), "window_sec": a.window,
+            "min_hit": a.min_hit, "doc": str(doc) if doc else "", "doc_source": tag,
+            "note": "锚点漂移自检（W13）+ 最佳帧建议（W11）：对每条 ▶ 锚点在 ±窗口内取帧，"
+                    "按「标题/正文关键词是否出现在该帧 OCR 文本」打分；drift=窗口内有帧但关键词全不命中"
+                    "（锚点疑似漂移或截到了相邻页），no_frame=窗口内无候选帧，"
+                    "indeterminate=无标题可依或标题为「开场/结语」类通用词（成品逐字稿 `[MM:SS]` 行的"
+                    "关键词来自口语正文，与画面文字本就不必重合，故不下漂移结论）。"
+                    "`best` 即建议采用的最佳帧（OCR 匹配度最高）。"}
+    if not doc:
+        write_json(ctx.rec("anchor_check.json"), dict(base, anchors=[], checked=0,
+                                                     drift_count=0, no_frame_count=0))
+        log("  ⚠ 未找到含 ▶ 时间锚点的逐字稿（修正版 / 转录成品均无），锚点自检跳过")
+        return 0
+
+    anchors = parse_anchors(doc.read_text(encoding="utf-8"))
+    if not anchors:
+        write_json(ctx.rec("anchor_check.json"), dict(base, anchors=[], checked=0,
+                                                     drift_count=0, no_frame_count=0))
+        log("  ⚠ %s 内未解析到 ▶ 时间锚点（约定 `▶ **MM:SS**`，蓝本 §3.1），自检跳过" % doc.name)
+        return 0
+
+    results, drift, noframe, indet = [], 0, 0, 0
+    # 转录成品（`[MM:SS]` 行）没有「知识点小标题」，其标题只是文档结构标题（如「纠正版逐字稿」），
+    # 不能据此判漂移——该模式下所有未命中一律记 indeterminate，仅给候选帧。
+    ts_mode = bool(anchors) and anchors[0].get("mode") == "ts"
+    for an in anchors:
+        cands = [f for f in frames if abs(f["timestamp_sec"] - an["time_sec"]) <= a.window]
+        head_kw = tokens(an["heading"])[:8]
+        alt = tokens(an["body"])[:8]
+        kws = head_kw or alt
+        generic_head = (an["heading"] or "").strip() in GENERIC_HEADINGS
+        ranked = []
+        for f in cands:
+            text = ocr.get(f["frame_id"], {}).get("ocr_text") or f.get("ocr_text") or ""
+            hit = [k for k in kws if kw_hit(k, text)]
+            hit_alt = [k for k in alt if kw_hit(k, text)]
+            ranked.append({"frame_id": f["frame_id"], "path": f["path"],
+                           "ts": round(f["timestamp_sec"], 2), "score": len(hit),
+                           "alt_score": len(hit_alt),
+                           "delta_sec": round(f["timestamp_sec"] - an["time_sec"], 1),
+                           "matched": (hit or hit_alt)[:5], "ocr_head": text[:60]})
+        ranked.sort(key=lambda x: (x["score"], x["alt_score"], -abs(x["delta_sec"])), reverse=True)
+        best = ranked[0] if ranked else None
+        if best and (best["score"] >= a.min_hit or best["alt_score"] >= a.min_hit):
+            status = "ok"
+        elif ts_mode or not head_kw or generic_head:
+            # 锚点无知识点标题可依（成品逐字稿的 `[MM:SS]` 行 / 通用小标题「开场·结语」）：
+            # 关键词来自口语正文，与画面文字本就不必重合 → 不下漂移结论。
+            status, indet = "indeterminate", indet + 1
+        elif best:
+            status, drift = "drift", drift + 1
+        else:
+            status, noframe = "no_frame", noframe + 1
+        results.append({"line_no": an["line_no"], "timecode": an["timecode"], "mode": an.get("mode", ""),
+                        "time_sec": an["time_sec"], "heading": an["heading"], "body": an["body"],
+                        "keywords": kws, "alt_keywords": alt, "status": status,
+                        "drift_sec": None if not best else best["delta_sec"],
+                        "best": best, "candidates": ranked[:3]})
+
+    write_json(ctx.rec("anchor_check.json"), dict(
+        base, checked=len(results), ok_count=len(results) - drift - noframe - indet,
+        drift_count=drift, no_frame_count=noframe, indeterminate_count=indet, anchors=results))
+    log("  ✓ 锚点自检：%d 条（源：%s %s）→ 命中 %d / 漂移 %d / 无候选帧 %d / 无标题不下结论 %d"
+        % (len(results), tag, doc.name, len(results) - drift - noframe - indet, drift, noframe, indet))
+    for r in results:
+        if r["status"] == "ok":
+            continue
+        b = r["best"]
+        tail = ("；建议改用 %s（%.1fs，Δ%+.1fs，OCR 命中 %s）"
+                % (Path(b["frame_id"]).name, b["ts"], b["delta_sec"], "/".join(b["matched"]) or b["ocr_head"][:20])) \
+            if b else ""
+        log("      ⚠ [%s] %s《%s》%s" % (r["status"], r["timecode"], r["heading"] or r["body"][:18], tail))
+    if drift or noframe:
+        log("  → drift/no_frame 项须按「抽帧目视确认」重新定位（勿盲信锚点），再据 best 候选重截；"
+            "确认后可在 illustration_index.json 追加 recaptured 审计字段")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# 子命令：name-check（命名规范 + 文件名↔画面一致性，2026-09-23 新增）
+# ---------------------------------------------------------------------------
+
+def _ocr_cached(path: Path, cache_dir: Path):
+    """对图片做 OCR 并落缓存（subprocess-per-image + 断点续跑，防内存累积 OOM）。"""
+    arch = cache_dir / path.stem / "存档" / ("%s.json" % path.stem)
+    if not arch.is_file():
+        proc = kit_call(["extract", str(path), "--type", "ocr", "--out", str(cache_dir / path.stem)])
+        if proc.returncode != 0 or not arch.is_file():
+            return None
+    data = read_json(arch, {}) or {}
+    return (data.get("text") or data.get("raw_text") or "").strip()
+
+
+def cmd_name_check(a) -> int:
+    ctx = Ctx(a.workspace, a.section)
+    shots = ctx.shots_files()
+    base = {"section": ctx.section, "generated_at": now_iso(), "ocr": a.ocr,
+            "note": "① 命名规范：`第NN节_图MM_中文短描述.{png|jpg}`，章号/图号**零填充**、无空格与特殊字符；"
+                    "② 文件名↔画面一致性：把文件名描述词（以及 illustration_index.json 的 anchor_para）"
+                    "与**该图自身 OCR 文本**比对，0 命中即告警（W10：命名须由帧内容驱动，不得凭段落主题猜）。"}
+    if not shots:
+        write_json(ctx.rec("naming_report.json"), dict(base, stats={"total": 0, "name_bad": 0, "mismatch": 0,
+                                                                   "unverifiable": 0, "checked": 0}, items=[]))
+        log("  · 讲义截图/ 下无图片，命名核对跳过")
+        return 0
+
+    index = read_json(ctx.rec("illustration_index.json"), None)
+    if isinstance(index, dict):
+        index = index.get("items")
+    anchor_of = {}
+    for e in (index or []):
+        if isinstance(e, dict) and e.get("img"):
+            anchor_of[e["img"]] = e.get("anchor_para") or ""
+
+    items, name_bad, mismatch, unverifiable, checked = [], [], [], [], 0
+    pads = {"ch": set(), "idx": set()}
+    for p in shots:
+        m = RE_SHOT_NAME.match(p.name)
+        issues = []
+        if m:
+            pads["ch"].add(len(m.group(1)))
+            pads["idx"].add(len(m.group(2)))
+            if not re.search(r"[\u4e00-\u9fff]", m.group(3)):
+                issues.append("描述无中文（可读性差）")
+        else:
+            issues.append("命名不符「第NN节_图MM_描述.ext」")
+            if re.search(r"^第\d{1}节|_图\d{1}(?!\d)", p.name):
+                issues.append("章号/图号未零填充")
+        if " " in p.stem or "　" in p.stem:
+            issues.append("含空格")
+        if re.search(r'[<>:"/\\|?*]', p.name):
+            issues.append("含特殊字符")
+        items.append({"file": p.name, "path": str(p), "pattern_ok": bool(m), "issues": issues,
+                      "chapter": m.group(1) if m else "", "index": m.group(2) if m else "",
+                      "desc": m.group(3) if m else "", "verdict": "ok", "anchor_para": anchor_of.get(p.name, ""),
+                      "ocr_head": "", "overlap": None})
+        if issues:
+            name_bad.append(p.name)
+
+    pad_issue = len(pads["ch"]) > 1 or len(pads["idx"]) > 1
+    if a.ocr == "on":
+        cache = ctx.work / "naming_ocr"
+        limit = a.limit if a.limit and a.limit > 0 else len(items)
+        for it in items[:limit]:
+            text = _ocr_cached(Path(it["path"]), cache)
+            checked += 1
+            if text is None:
+                it["verdict"] = "ocr_failed"
+                continue
+            it["ocr_head"] = text[:60]
+            kws = tokens(it["desc"]) + tokens(it["anchor_para"])
+            if not RE_MEANINGFUL.search(text) or not kws:
+                # 画面无文字（纯图/构图页，OCR 只吐标点噪声）或文件名无可比对关键词
+                # → 记「无法核对」，不作名实不符结论（宁可漏报，不可误报）
+                it["verdict"], it["overlap"] = "unverifiable", None
+                unverifiable.append(it["file"])
+                continue
+            hit = [k for k in kws if kw_hit(k, text)]
+            it["overlap"] = len(hit)
+            it["matched"] = hit[:5]
+            if not hit:
+                it["verdict"] = "mismatch"
+                mismatch.append(it["file"])
+
+    write_json(ctx.rec("naming_report.json"), dict(
+        base, stats={"total": len(items), "name_bad": len(name_bad), "pad_inconsistent": pad_issue,
+                     "checked": checked, "mismatch": len(mismatch), "unverifiable": len(unverifiable)},
+        name_bad=name_bad, pad_inconsistent=pad_issue, mismatch=mismatch,
+        unverifiable=unverifiable, items=items))
+    log("  ✓ 命名核对：%d 张 → 命名不规范 %d / 零填充混用 %s / 文件名↔画面不一致 %d / 无法核对 %d"
+        % (len(items), len(name_bad), "是" if pad_issue else "否", len(mismatch), len(unverifiable)))
+    for n in name_bad[:8]:
+        log("      ⚠ 命名：%s" % n)
+    for n in mismatch[:8]:
+        log("      ⚠ 名实疑似不符：%s" % n)
+    if a.ocr == "on" and mismatch:
+        log("  → 名实不符项须抽帧目视确认后重命名/重截（W10/W11），勿仅凭段落主题改回原名")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# 子命令：consolidate（跨节状态自动汇总，取代手工补 pipeline_state，2026-09-23 新增）
+# ---------------------------------------------------------------------------
+
+def _auto_index_block(ctx, sections) -> str:
+    lines = [INDEX_BEGIN,
+             "> 以下「课程总览自动汇总」由工作流 `video-to-content-pack` 的 `consolidate` 步生成"
+             "（%s）——**配图数取自磁盘实际计数**，勿手工编辑该区块。" % now_iso(), "",
+             "| 节 | 交付文档 | 修正版逐字稿 | 配图数 | 校验（失败/警告） | 记录链 |",
+             "|---|---|---|---|---|---|"]
+    for s in sections:
+        vf, vw = s["verify_failed"], s["verify_warned"]
+        # 未做校验的节（无 verify_report.json）：显式标「未校验」，
+        # 绝不以 0 冒充「校验通过」；此处也必须容忍 None 而非崩溃（consolidate 可单独调用）
+        cell = "未校验" if vf is None else "%d / %d" % (vf, vw or 0)
+        lines.append("| %s | %d | %d | %d | %s | %d/%d |" % (
+            s["section"], s["docs"], s["transcripts"], s["shots"], cell,
+            len(s["records_present"]), len(s["records_present"]) + len(s["records_missing"])))
+    lines.append(INDEX_END)
+    return "\n".join(lines) + "\n"
+
+
+def cmd_consolidate(a) -> int:
+    """汇总各节状态 → `_work/aggregated_sections.json` + 交付区自动索引区块。
+
+    为何不写 `pipeline_state.json`：该文件由 runner 独占（每步 `_save()` 用内存态
+    整体覆写），脚本侧写入会被下一次保存覆盖，属竞态。故汇总落**独立记录**
+    `aggregated_sections.json`，索引区块用标记包裹幂等改写、不覆盖人工内容。
+    """
+    ctx = Ctx(a.workspace, a.section)
+    work_root = ctx.ws / "_work"
+    records = ["run_context.json", "ingestion_manifest.json", "transcript_meta.json",
+               "frame_index.json", "ocr_review.json", "slide_class.json", "anchor_check.json",
+               "crop_manifest.json", "delivery_spec.json", "illustration_index.json",
+               "naming_report.json", "cut_manifest.json", "desen_report.json", "verify_report.json"]
+    sections = []
+    for d in (sorted(p for p in work_root.iterdir() if p.is_dir()) if work_root.is_dir() else []):
+        dig = chapter_digits(d.name)
+        vr = read_json(d / "verify_report.json", {}) or {}
+        checks = vr.get("mechanical_checks") or []
+        illust = read_json(d / "illustration_index.json", []) or []
+        if isinstance(illust, dict):
+            illust = illust.get("items") or []
+        active = [e for e in illust if isinstance(e, dict) and not e.get("text_replaced")]
+        present = [r for r in records if (d / r).is_file()]
+        sections.append({
+            "section": d.name, "chapter_digits": dig,
+            "docs": len(collect_records(ctx.sub_doc, "*.md", dig)),
+            "transcripts": len(collect_records(ctx.sub_transcript, "*.md", dig)),
+            "shots": len(collect_records(ctx.shots, "*", dig)),
+            "shots_text_only": len(collect_records(ctx.shots_text, "*", dig)),
+            "illustrations": len(active),
+            "illustrations_total": len(illust),
+            "verify_failed": vr.get("failed", 0) if vr else None,
+            "verify_warned": vr.get("warned", 0) if vr else None,
+            "verify_checks": len(checks),
+            "records_present": present,
+            "records_missing": [r for r in records if r not in present],
+        })
+
+    total = {
+        "sections": len(sections),
+        "docs": sum(s["docs"] for s in sections),
+        "transcripts": sum(s["transcripts"] for s in sections),
+        "shots": sum(s["shots"] for s in sections),
+        "shots_text_only": sum(s["shots_text_only"] for s in sections),
+        "illustrations": sum(s["illustrations"] for s in sections),
+        "verify_failed": sum(s["verify_failed"] or 0 for s in sections),
+        "verify_warned": sum(s["verify_warned"] or 0 for s in sections),
+        "sections_without_verify": [s["section"] for s in sections if s["verify_failed"] is None],
+    }
+    write_json(work_root / "aggregated_sections.json", {
+        "workflow": "video-to-content-pack", "generated_at": now_iso(),
+        "note": "跨节状态汇总（W6）。pipeline_state.json 由 runner 独占，脚本不回写以避免竞态覆盖。",
+        "index": "课程交付/00_课程总览_索引.md", "sections": sections, "total": total,
+    })
+
+    # 自动索引区块（标记包裹，幂等；无标记时追加，绝不覆盖人工内容）
+    idx = ctx.deliver / "00_课程总览_索引.md"
+    ctx.deliver.mkdir(parents=True, exist_ok=True)
+    block = _auto_index_block(ctx, sections)
+    if idx.is_file():
+        text = idx.read_text(encoding="utf-8")
+        if INDEX_BEGIN in text and INDEX_END in text:
+            head = text.split(INDEX_BEGIN)[0]
+            tail = text.split(INDEX_END, 1)[1]
+            idx.write_text(head + block + tail, encoding="utf-8")
+        else:
+            idx.write_text(text.rstrip() + "\n\n" + block, encoding="utf-8")
+    else:
+        idx.write_text("# 课程总览与索引\n\n" + block, encoding="utf-8")
+
+    log("  ✓ 跨节汇总：%d 节 / 交付文档 %d / 配图 %d（文字页替代 %d）/ 校验失败 %d 警告 %d"
+        % (total["sections"], total["docs"], total["shots"], total["shots_text_only"],
+           total["verify_failed"], total["verify_warned"]))
+    log("  ✓ 已落盘：%s" % (work_root / "aggregated_sections.json").relative_to(ctx.ws))
+    log("  ✓ 自动索引区块已写入：%s（标记 %s…%s）" % (idx.relative_to(ctx.ws), INDEX_BEGIN, INDEX_END))
+    if total["sections_without_verify"]:
+        log("  ⚠ 未做校验的节：%s" % "、".join(total["sections_without_verify"]))
+    return 0
+
+
 def _duration_of(path: Path, ffmpeg: str) -> float:
     """用 ffprobe 同源能力取时长：ffmpeg -i 输出解析（无 ffprobe 依赖）。"""
     proc = subprocess.run([ffmpeg, "-nostdin", "-i", str(path)],
@@ -1263,26 +1900,41 @@ def _duration_of(path: Path, ffmpeg: str) -> float:
 
 
 def cmd_verify(a) -> int:
+    """交付前机械校验（6 项门禁，W15）——硬项不过即阻断，软项显式告警不阻断。
+
+    门禁 1 引用完整性 / 2 命名规范（含量名一致）/ 3 最佳截取核对 /
+    4 配图覆盖 / 5 时间锚点下传 / 6 记录链·备份链·切片·外发·渲染·索引。
+    语义判据（图文位置 A–E、配图三条标准、形态结构、文案合规）仍交确认门。
+    """
     ctx = Ctx(a.workspace, a.section)
     meta = read_json(ctx.rec("transcript_meta.json"), {}) or {}
     cm = read_json(ctx.rec("cut_manifest.json"), {}) or {}
-    checks, failed = [], 0
+    checks, failed, warned = [], 0, 0
 
-    def add(name, ok, detail=""):
-        nonlocal failed
-        checks.append({"check": name, "ok": bool(ok), "detail": detail})
+    def add(name, ok, detail="", level="hard"):
+        nonlocal failed, warned
+        ok = bool(ok)
+        checks.append({"check": name, "ok": ok, "level": level, "detail": detail})
         if not ok:
-            failed += 1
-        log("  %s %s%s" % ("✓" if ok else "✗", name, ("　— %s" % detail) if detail else ""))
+            if level == "soft":
+                warned += 1
+            else:
+                failed += 1
+        mark = "✓" if ok else ("⚠" if level == "soft" else "✗")
+        log("  %s %s%s%s" % (mark, name, "　[告警]" if (not ok and level == "soft") else "",
+                             ("　— %s" % detail) if detail else ""))
 
-    # ① 交付物存在
+    def gate(no, title):
+        log("  ── 门禁 %s：%s ──" % (no, title))
+
+    # ═══ 门禁 1：引用完整性 ═══
+    gate(1, "引用完整性")
     docs = list(ctx.sub_doc.glob("*.md")) if ctx.sub_doc.is_dir() else []
     trans = list(ctx.sub_transcript.glob("*.md")) if ctx.sub_transcript.is_dir() else []
     add("交付文档存在（课程交付/讲义/*.md）", bool(docs), "%d 份" % len(docs))
     add("修正版逐字稿存在（课程交付/逐字稿_修正版/*.md）", bool(trans), "%d 份" % len(trans))
 
-    # ② 截图引用零缺失 / 零冗余
-    refs, missing = set(), []
+    refs, missing, textpage_refs = set(), [], []
     for md in docs + trans:
         for m in RE_MD_IMG.finditer(md.read_text(encoding="utf-8")):
             raw = m.group(1).strip()
@@ -1292,20 +1944,122 @@ def cmd_verify(a) -> int:
             refs.add(str(p))
             if not p.is_file():
                 missing.append("%s → %s" % (md.name, raw))
-    add("截图引用零缺失", not missing, ("缺失 %d 处：%s" % (len(missing), "; ".join(missing[:5]))) if missing else "引用 %d 个" % len(refs))
-    shots = {str(p.resolve()) for p in ctx.shots.iterdir()
-             if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg")} if ctx.shots.is_dir() else set()
+            elif ctx.shots_text.resolve() in p.parents:
+                textpage_refs.append("%s → %s" % (md.name, raw))
+    add("截图引用零缺失", not missing,
+        ("缺失 %d 处：%s" % (len(missing), "; ".join(missing[:5]))) if missing else "引用 %d 个" % len(refs))
+    shots = {str(p.resolve()) for p in ctx.shots_files()}
     orphan = sorted(shots - refs)
     add("截图零冗余（无未被引用的孤儿图）", not orphan,
-        ("孤儿 %d 张：%s" % (len(orphan), ", ".join(Path(o).name for o in orphan[:5]))) if orphan else "共 %d 张" % len(shots))
+        ("孤儿 %d 张：%s" % (len(orphan), ", ".join(Path(o).name for o in orphan[:5])))
+        if orphan else "共 %d 张" % len(shots))
+    add("纯文字页未被当作截图引用（讲义截图_文字页替代/ 应转文字呈现）", not textpage_refs,
+        "; ".join(textpage_refs[:3]) if textpage_refs else "0 处")
 
-    # ③ 备份链
+    # ═══ 门禁 2：命名规范 + 文件名↔画面一致 ═══
+    gate(2, "命名规范与名实一致")
+    nrep = read_json(ctx.rec("naming_report.json"), None)
+    bad_names, pads_ch, pads_idx = [], set(), set()
+    for p in sorted(Path(s) for s in shots):
+        m = RE_SHOT_NAME.match(p.name)
+        if not m:
+            bad_names.append(p.name)
+            continue
+        pads_ch.add(len(m.group(1)))
+        pads_idx.add(len(m.group(2)))
+        if re.search(r'[<>:"/\\|?*]', p.name) or " " in p.stem:
+            bad_names.append(p.name)
+    pad_mix = len(pads_ch) > 1 or len(pads_idx) > 1
+    add("截图命名符合「第NN节_图MM_描述.ext」", not bad_names,
+        ("不规范 %d 张：%s" % (len(bad_names), ", ".join(bad_names[:5]))) if bad_names else "全部合规")
+    add("章号/图号零填充一致（无 1 位与 2 位混用）", not pad_mix,
+        "宽度：章 %s / 图 %s" % (sorted(pads_ch), sorted(pads_idx)))
+    if nrep is None:
+        add("文件名↔画面一致性（需先跑 name-check 步）", False,
+            "缺少 naming_report.json", level="soft")
+    else:
+        st = nrep.get("stats") or {}
+        mism, chk = st.get("mismatch") or 0, st.get("checked") or 0
+        if mism:
+            add("文件名↔画面一致性（OCR 关键词命中）", False,
+                "疑似名实不符 %d 张：%s" % (mism, ", ".join((nrep.get("mismatch") or [])[:5])),
+                level="soft")
+        elif chk == 0:
+            # 一张都没实际核对过（`name-check --ocr off` 或全部未跑到）：不得显示为「已核对通过」，
+            # 否则门禁 2 形同虚设——这是「告警而非绿灯」的诚实性要求（W10/W15）。
+            add("文件名↔画面一致性（OCR 关键词命中）", False,
+                "未做画面 OCR 核对（naming_report.checked=0，ocr=%s）——请以 `name-check --ocr on` 重跑"
+                % (nrep.get("ocr") or "?"), level="soft")
+        else:
+            add("文件名↔画面一致性（OCR 关键词命中）", True,
+                "核对 %d 张，0 不符（无法核对 %d 张）" % (chk, st.get("unverifiable") or 0),
+                level="soft")
+
+    # ═══ 门禁 3：最佳截取核对（锚点 ± 窗口 OCR） ═══
+    gate(3, "最佳截取核对")
+    arep = read_json(ctx.rec("anchor_check.json"), None)
+    if arep is None:
+        add("锚点自检（需先跑 anchor-check 步）", False, "缺少 anchor_check.json", level="soft")
+    else:
+        add("锚点无漂移（±%ss 窗口内 OCR 命中核心词）" % arep.get("window_sec", 10),
+            not arep.get("drift_count"),
+            ("漂移 %d 条 / 无候选帧 %d 条 / 无标题不下结论 %d 条（共 %d 条，源 %s）"
+             % (arep.get("drift_count"), arep.get("no_frame_count"),
+                arep.get("indeterminate_count") or 0, arep.get("checked"),
+                Path(arep.get("doc") or "—").name)) if arep.get("drift_count")
+            else "核对 %d 条锚点，0 漂移" % arep.get("checked", 0))
+        add("锚点均有候选帧（无 no_frame）", not arep.get("no_frame_count"),
+            "无候选帧 %s 条" % arep.get("no_frame_count"), level="soft")
+
+    # ═══ 门禁 4：配图覆盖（知识点段 → 配图，W7） ═══
+    gate(4, "配图覆盖")
+    sec_dig = chapter_digits(ctx.section)
+
+    def _mine(md_path):
+        """只校验本节文档（按章节号匹配，兼容第7章/第07节两种零填充写法）。"""
+        return (not sec_dig) or chapter_digits(md_path.name) == sec_dig
+
+    uncovered = []
+    for md in docs:
+        if not _mine(md):
+            continue
+        text = md.read_text(encoding="utf-8")
+        heads = [h for h in RE_MD_HEAD.finditer(text)]
+        lvl = 3 if any(len(h.group(1)) >= 3 for h in heads) else 2
+        picked = [h for h in heads if len(h.group(1)) == lvl]
+        for i, h in enumerate(picked):
+            end = picked[i + 1].start() if i + 1 < len(picked) else len(text)
+            body = text[h.end():end]
+            body_chars = len(re.sub(r"\s", "", RE_MD_IMG.sub("", body)))
+            if body_chars >= a.coverage_min_chars and not RE_MD_IMG.search(body):
+                uncovered.append("%s §%s（%d 字无图）" % (md.name, h.group(2)[:16], body_chars))
+    add("每个知识点段（≥%d 字）至少 1 图" % a.coverage_min_chars, not uncovered,
+        ("%d 段无图：%s" % (len(uncovered), "; ".join(uncovered[:4]))) if uncovered
+        else "0 段无图（纯文字段已转文字呈现）", level="soft")
+
+    # ═══ 门禁 5：时间锚点下传与精度（W1） ═══
+    gate(5, "时间锚点下传")
+    adoc, atag = ctx.find_anchor_doc()
+    n_src = n_dst = 0
+    if adoc:
+        n_src = len(parse_anchors(adoc.read_text(encoding="utf-8")))
+    for md in docs:
+        if not _mine(md):
+            continue
+        n_dst += len(RE_ANCHOR.findall(md.read_text(encoding="utf-8")))
+    if n_src:
+        add("时间锚点已下传至交付文档（讲义内联 ▶）", n_dst > 0,
+            "源 %s %d 条 → 交付文档 %d 处" % (atag or "逐字稿", n_src, n_dst))
+    else:
+        add("时间锚点下传（逐字稿暂无 ▶ 锚点，跳过）", True, "源 0 条", level="soft")
+
+    # ═══ 门禁 6：记录链·备份链·切片·外发·渲染·索引 ═══
+    gate(6, "记录链 / 备份链 / 切片 / 外发 / 渲染 / 索引")
     if shots:
         baks = {p.name for p in ctx.shots_bak.iterdir() if p.is_file()} if ctx.shots_bak.is_dir() else set()
         add("去边前原图备份齐全（讲义截图_原始备份/）",
             len(baks) >= len(shots), "备份 %d / 现图 %d" % (len(baks), len(shots)))
 
-    # ④ 切片一致性 + 时长核验
     if cm.get("items"):
         items = cm["items"]
         add("切片文件全部存在", all(Path(i["dest_dir"], i["filename"]).is_file() for i in items),
@@ -1339,20 +2093,30 @@ def cmd_verify(a) -> int:
         except VcpError as exc:
             add("时长核验（需 ffmpeg）", False, str(exc))
 
-    # ⑤ 记录链完整性
     required = ["run_context.json", "ingestion_manifest.json", "transcript_meta.json", "frame_index.json"]
     if a.granularity != "none":
         required += ["cut_plan.json", "cut_manifest.json"]
     miss = [r for r in required if not ctx.rec(r).is_file()]
     add("工作记录链完整", not miss, ("缺失：%s" % ", ".join(miss)) if miss else "%d 项齐全" % len(required))
 
-    # ⑥ 外发扫描结论（外发前必扫铁律的留痕）
+    ill = read_json(ctx.rec("illustration_index.json"), None)
+    if isinstance(ill, dict):
+        ill = ill.get("items")
+    if ill is not None:
+        active = [e for e in ill if isinstance(e, dict) and not e.get("text_replaced")]
+        gone = [e.get("img") for e in active if e.get("img") and not (ctx.shots / e["img"]).is_file()]
+        add("配图索引与磁盘一致（illustration_index ↔ 讲义截图/）",
+            len(active) == len(shots) and not gone,
+            "索引有效条目 %d / 磁盘 %d%s" % (len(active), len(shots),
+                                            ("；索引指向缺失文件 %s" % gone[:3]) if gone else ""))
+    else:
+        add("配图索引存在（illustration_index.json）", False, "缺少（illustrate 步未执行）", level="soft")
+
     drep = read_json(ctx.rec("desen_report.json"), None)
     if a.desen_gate == "on":
         add("交付物已经本地敏感信息扫描且通过", bool(drep and drep.get("clean")),
             "见 desen_report.json" if drep else "缺少 desen_report.json（desen_gate 步未执行）")
 
-    # ⑦ 渲染一致性（开启时）
     if a.deliverable_render == "pdf":
         rman = read_json(ctx.rec("render_manifest.json"), {}) or {}
         expect = {p.stem for p in docs + trans}
@@ -1363,24 +2127,25 @@ def cmd_verify(a) -> int:
     write_json(ctx.rec("verify_report.json"), {
         "section": ctx.section, "generated_at": now_iso(),
         "granularity": cm.get("granularity") or a.granularity,
-        "mechanical_checks": checks, "failed": failed,
+        "gates": ["1 引用完整性", "2 命名规范与名实一致", "3 最佳截取核对",
+                  "4 配图覆盖", "5 时间锚点下传", "6 记录链/备份链/切片/外发/渲染/索引"],
+        "mechanical_checks": checks, "failed": failed, "warned": warned,
         "semantic_pending": [
             "图文位置判据 A 真错位 / B 多图堆叠 / C 图先于文 / D 裸图堆叠 必须为 0（E 类合法例外放行）"
             "——见 illustration-spec.md，属语义判断，由确认门交用户/Agent 复核",
-            "配图三条标准（内容匹配 / 数量按需 / 密集合成）复核",
-            "交付文档结构符合 delivery_spec.json 指定形态",
+            "配图三条标准（内容匹配 / 数量按需 / 密集合成）复核；纯文字页是否已转文字呈现（slide_class.json）",
+            "交付文档结构符合 delivery_spec.json 指定形态；降级/未校对声明是否置顶（W3）",
             "文案合规提示齐全（极限词/价格/功效需人工核对）",
             "目录/产品差异报告已确认",
         ],
     })
-    log("  ── 机械校验：%d 项，失败 %d 项 ──" % (len(checks), failed))
+    log("  ── 机械校验：%d 项，失败 %d 项，告警 %d 项 ──" % (len(checks), failed, warned))
     if failed:
-        log("  ✗ 机械校验未通过，请修复后重跑本步（详见 verify_report.json）")
+        log("  ✗ 机械校验未通过（%d 项硬失败），请修复后重跑本步（详见 verify_report.json）" % failed)
         return 3
-    log("  ✓ 机械校验全部通过；语义判据（图文位置/配图标准/合规）见 verify_report.json 的 semantic_pending，"
-        "须在确认门由用户确认")
+    log("  ✓ 机械校验硬项全部通过（告警 %d 项须逐条处置）；语义判据见 verify_report.json 的 "
+        "semantic_pending，须在确认门由用户确认" % warned)
     return 0
-
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -1475,10 +2240,43 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--desen-gate", dest="desen_gate", default="on")
     sp.set_defaults(func=cmd_desen_gate)
 
-    sp = common(sub.add_parser("verify", help="机械校验（引用/段数/时长/记录链/备份链）"))
+    sp = common(sub.add_parser("classify-slides",
+                               help="幻灯片价值分类器：纯文字页（封面/目录/总结/过渡/条目）不截图"))
+    sp.add_argument("--ink-max", dest="ink_max", type=float, default=0.12,
+                    help="墨量上限（0~1，越小越严；低墨量+文字页特征才判 text_only；默认 0.12）")
+    sp.add_argument("--box-max", dest="box_max", type=int, default=12,
+                    help="文字框数上限（超过视为非纯文字页；默认 12）")
+    sp.add_argument("--char-max", dest="char_max", type=int, default=320,
+                    help="OCR 字符数上限（超过视为非纯文字页；默认 320）")
+    sp.add_argument("--list-box-max", dest="list_box_max", type=int, default=12,
+                    help="判「条目页」允许的最大文字框数（默认 12）")
+    sp.set_defaults(func=cmd_classify_slides)
+
+    sp = common(sub.add_parser("anchor-check",
+                               help="锚点自检（±窗口 OCR 纠漂）+ 最佳帧建议（录最佳截取）"))
+    sp.add_argument("--window", type=float, default=10.0, help="锚点附近抽样窗口秒数（默认 10）")
+    sp.add_argument("--min-hit", dest="min_hit", type=int, default=1,
+                    help="判定「命中」所需的最少关键词数（默认 1）")
+    sp.add_argument("--doc", default="", help="锚点来源文档（留空=自动：修正版逐字稿 > 转录成品逐字稿）")
+    sp.set_defaults(func=cmd_anchor_check)
+
+    sp = common(sub.add_parser("name-check",
+                               help="命名规范校验 + 文件名↔画面 OCR 一致性核对"))
+    sp.add_argument("--ocr", default="on", choices=["on", "off"],
+                    help="是否做画面 OCR 一致性核对（on 较慢但能抓名实不符；默认 on）")
+    sp.add_argument("--limit", type=int, default=0, help="最多核对多少张（0=全部；默认 0）")
+    sp.set_defaults(func=cmd_name_check)
+
+    common(sub.add_parser("consolidate",
+                          help="跨节状态自动汇总 → aggregated_sections.json + 交付索引区块")
+           ).set_defaults(func=cmd_consolidate)
+
+    sp = common(sub.add_parser("verify", help="机械校验（6 项门禁：引用/命名/最佳截取/覆盖/锚点/记录链）"))
     sp.add_argument("--granularity", default="none")
     sp.add_argument("--desen-gate", dest="desen_gate", default="on")
     sp.add_argument("--deliverable-render", dest="deliverable_render", default="pdf")
+    sp.add_argument("--coverage-min-chars", dest="coverage_min_chars", type=int, default=200,
+                    help="「知识点段无图」告警的字数门槛（默认 200 字）")
     sp.add_argument("--ffmpeg-bin", dest="ffmpeg_bin", default="")
     sp.set_defaults(func=cmd_verify)
 

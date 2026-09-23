@@ -1,8 +1,8 @@
 {
   "workflow": "video-to-content-pack",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "title": "视频转内容包工作流",
-  "description": "视频内容（录屏/直播/自媒体/采集设备）→ 修正版逐字稿 + 交付文档（多形态，嵌去边截图）+ 多粒度切片视频 + 检索清单 + 文案 + 精排 PDF。机械环节由本工作流自带脚本 tools/vcp.py 承担（runner 直跑、跨平台、可续跑），创作环节由 Agent 按蓝本执行（runner 记状态 + 确认门 + 产物 sha256 指纹）。环境统一复用套件虚拟环境 ~/office-kit/.venv（不自建 venv）。v0.5.0 新增「幻灯片价值分类（纯文字页不截图）／锚点自检与最佳帧建议／命名规范与名实一致核对／跨节状态自动汇总」四道机械门，verify 升级为 6 项门禁。",
+  "description": "视频内容（录屏/直播/自媒体/采集设备）→ 修正版逐字稿 + 交付文档（多形态，嵌去边截图）+ 多粒度切片视频 + 检索清单 + 文案 + 精排 PDF。机械环节由本工作流自带脚本 tools/vcp.py 承担（runner 直跑、跨平台、可续跑），创作环节由 Agent 按蓝本执行（runner 记状态 + 确认门 + 产物 sha256 指纹）。环境统一复用套件虚拟环境 ~/office-kit/.venv（不自建 venv）。v0.5.0 新增「幻灯片价值分类（纯文字页不截图）／锚点自检与最佳帧建议／命名规范与名实一致核对／跨节状态自动汇总」四道机械门，verify 升级为 6 项门禁。v0.5.1 把工作区定位明确为「**单节拆解执行任务，汇总交付**」：节级产物一律以 `第NN节_` 前缀平铺（多节互不覆盖），课程级汇总产物（README 总索引 + 合并清单/索引）由 consolidate 步跨节生成；全部节级视图（export/render/cloud-upload/desen-gate/verify）按章节号过滤，杜绝「多节共目录互相串味」。",
   "blueprint_doc": "./蓝本.md",
   "blueprint_note": "人类可读蓝本，随工作流分发（跨平台跨设备可复用）；与 workflow.json / illustration-spec.md / tools/vcp.py 同包。步骤章节引用见 state_schema 与各步 desc。",
 
@@ -191,7 +191,7 @@
     { "id": "authoring",
       "executor": "agent",
       "checkpoint": "confirm",
-      "desc": "修正版逐字稿 + 交付文档（蓝本 §3/§3.4/§3.6）：① 术语替换表以**结构化围栏块**承载（`<!-- vcp:glossary begin -->`…`<!-- vcp:glossary end -->`，每行 `原词 → 修正词`），下游审计显式跳过该块，避免把「识别原词」误判为残留误识（W14）；② 标 `▶ mm:ss` 时间节点，并**把知识点段的时间码内联下传至交付文档**——讲义↔视频双向跳转，交付文档锚点数不得为 0（W1）；③ 交付文档与修正版**文首内置降级/未校对声明占位**（逐字稿未经纠正模型校对时须显式声明，W3）；④ 讲义「易错点速查」标 [高频]/[低频]、「关键词自测」标 [记忆]/[理解]/[应用]（W8）；⑤ **完整时间轴不塞进讲义**——讲义只留一行指针，完整表由 export 步派生为独立交付物 `课程交付/视频时间轴与来源说明.md`（W12）；⑥ 按 params.deliverable_types 写各形态交付文档（多形态并存），速览/关键词取自 digest.json；一次性提取 transcript_headers.json（供阶段四消费，不重复解析）；落 delivery_spec.json（形态/模板/生成时间）",
+      "desc": "修正版逐字稿 + 交付文档（蓝本 §3/§3.4/§3.6）：① 术语替换表以**结构化围栏块**承载（`<!-- vcp:glossary begin -->`…`<!-- vcp:glossary end -->`，每行 `原词 → 修正词`），下游审计显式跳过该块，避免把「识别原词」误判为残留误识（W14）；② 标 `▶ mm:ss` 时间节点，并**把知识点段的时间码内联下传至交付文档**——讲义↔视频双向跳转，交付文档锚点数不得为 0（W1）；③ 交付文档与修正版**文首内置降级/未校对声明占位**（逐字稿未经纠正模型校对时须显式声明，W3）；④ 讲义「易错点速查」标 [高频]/[低频]、「关键词自测」标 [记忆]/[理解]/[应用]（W8）；⑤ **完整时间轴不塞进讲义**——讲义只留一行指针，完整表由 export 步派生为独立交付物 `课程交付/视频时间轴与来源说明.md`（W12）；⑥ 按 params.deliverable_types 写各形态交付文档（多形态并存），速览/关键词取自 digest.json；一次性提取 transcript_headers.json（供阶段四消费，不重复解析）；落 delivery_spec.json（形态/模板/生成时间）。**节级命名（v0.5.1）**：交付文档与修正版逐字稿一律以 `第NN节_` 前缀命名（多节共目录互不覆盖，verify 门禁 2 软项校验）",
       "writes": ["课程交付/逐字稿_修正版/*.md", "课程交付/讲义/*.md", "_work/*/transcript_headers.json", "_work/*/delivery_spec.json"] },
 
     { "id": "anchor_check",
@@ -253,8 +253,8 @@
 
     { "id": "export",
       "uses": { "script": "tools/vcp.py", "args": ["export", "--workspace", "{workspace}", "--section", "{section}", "--granularity", "{granularity}"] },
-      "writes": ["课程交付/*.csv", "课程交付/*.md", "_work/*/export_manifest.json"],
-      "desc": "导出清单/索引/汇总（蓝本 §5，**无论粒度均执行**，修正历史上 granularity=none 时文案汇总与交付索引永不导出的缺陷）：全部由 cut_manifest + catalog/product_catalog + copywriting + 交付目录派生（utf-8-sig CSV + MD），含 课程交付/README.md 交付总索引（配图数为**磁盘/索引实际计数**，杜绝手工填写错漏 W5）+ 课程交付/视频时间轴与来源说明.md（**独立交付物**：来源与合规 + 章节时间轴 + 切片对照，W12）" },
+      "writes": ["课程交付/第NN节_*.csv", "课程交付/第NN节_*.md", "_work/*/export_manifest.json"],
+      "desc": "导出**节级**清单/索引/汇总（蓝本 §5，**无论粒度均执行**，修正历史上 granularity=none 时文案汇总与交付索引永不导出的缺陷）：全部由 cut_manifest + catalog/product_catalog + copywriting + 交付目录派生（utf-8-sig CSV + MD）。**全部产物以 `第NN节_` 前缀命名**（v0.5.1：单节拆解执行，多节共用工作区互不覆盖）——`第NN节_交付索引.md`（配图数为**磁盘/索引实际计数**，杜绝手工填写错漏 W5）、`第NN节_视频时间轴与来源说明.md`（**独立交付物**：来源与合规 + 章节时间轴 + 切片对照，W12）等；**只列本节**交付物（按章节号过滤，多节不串味）。课程级总索引 `课程交付/README.md` 与合并清单改由 consolidate 步跨节生成" },
 
     { "id": "render",
       "when": "deliverable_render!=off",
@@ -272,17 +272,17 @@
       "when": "desen_gate==on",
       "uses": { "script": "tools/vcp.py", "args": ["desen-gate", "--workspace", "{workspace}", "--section", "{section}", "--desen-gate", "{desen_gate}"] },
       "writes": ["_work/*/desen_report.json"],
-      "desc": "交付物外发前本地脱敏扫描（SOUL.md「外发必扫 DESEN」铁律的契约化）：对 课程交付/ 与 工作记录交付区 的 md/txt/csv 做 desen scan（目录级优先、无法判定则降级逐文件），命中敏感即**阻断交付**并给出「脱敏副本外发 / 留痕确认原样外发 / 改源内容」三条处置 → desen_report.json（蓝本 §0.7）" },
+      "desc": "交付物外发前本地脱敏扫描（SOUL.md「外发必扫 DESEN」铁律的契约化）：**节级默认范围**（v0.5.1）——只扫本节的交付物（`课程交付/第NN节_*` + 本节截图/文字页替代/PDF + 本节工作交付区），逐文件 scan；影像/PDF desen 不做 OCR，显式记为「待人工确认」绝不静默算过；文本命中敏感即**阻断交付**并给出「脱敏副本外发 / 留痕确认原样外发 / 改源内容」三条处置。课程级整包外发时改跑 `--scope workspace`（课程交付/ 全量递归）→ desen_report.json（蓝本 §0.7/§6）" },
 
     { "id": "verify",
       "checkpoint": "confirm",
       "uses": { "script": "tools/vcp.py", "args": ["verify", "--workspace", "{workspace}", "--section", "{section}", "--granularity", "{granularity}", "--desen-gate", "{desen_gate}", "--deliverable-render", "{deliverable_render}", "--coverage-min-chars", "{coverage_min_chars}", "--ffmpeg-bin", "{ffmpeg_bin}"] },
       "writes": ["_work/*/verify_report.json"],
-      "desc": "机械校验（**6 项门禁**，W15）+ 人工放行（蓝本 §6）：① 引用完整性（零缺失/零冗余/纯文字页未被当截图引用）；② 命名规范与名实一致（章号·图号零填充 + 文件名↔画面 OCR）；③ 最佳截取核对（锚点漂移数须为 0）；④ 配图覆盖（≥coverage_min_chars 字的 H3 段须有图）；⑤ 时间锚点下传（交付文档内联 ▶ 不得为 0）；⑥ 记录链/备份链/切片时长/外发扫描/PDF/配图索引一致。**硬项不达标 exit 3 阻断交付**，软项（W7/W10 类启发式判据）显式告警不阻断；语义判据（图文位置 A/B/C/D 为 0、配图三条标准、交付文档结构、文案合规）仍由确认门交用户确认 → verify_report.json" },
+      "desc": "机械校验（**6 项门禁**，W15）+ 人工放行（蓝本 §6）：① 引用完整性（零缺失/零冗余/纯文字页未被当截图引用）；② 命名规范与名实一致（章号·图号零填充 + 文件名↔画面 OCR）；③ 最佳截取核对（锚点漂移数须为 0）；④ 配图覆盖（≥coverage_min_chars 字的 H3 段须有图）；⑤ 时间锚点下传（交付文档内联 ▶ 不得为 0）；⑥ 记录链/备份链/切片时长/外发扫描/PDF/配图索引一致。**硬项不达标 exit 3 阻断交付**，软项（W7/W10 类启发式判据）显式告警不阻断；语义判据（图文位置 A/B/C/D 为 0、配图三条标准、交付文档结构、文案合规）仍由确认门交用户确认。**全部判据在节级视图下执行**（v0.5.1：按章节号过滤本节交付物与本节截图，多节共用工作区不串味；门禁 2 另增「节级产物带 `第NN节_` 前缀」软项） → verify_report.json" },
 
     { "id": "consolidate",
       "uses": { "script": "tools/vcp.py", "args": ["consolidate", "--workspace", "{workspace}", "--section", "{section}"] },
-      "writes": ["_work/aggregated_sections.json", "课程交付/00_课程总览_索引.md"],
-      "desc": "跨节状态自动汇总（W6/W5）：扫描 `_work/*/` 各节的记录链完整度 + verify 结论 + 配图实际计数 → `_work/aggregated_sections.json`，并把「课程总览自动汇总」表以标记块（`<!-- vcp:auto-index:begin/end -->`）幂等写入 课程交付/00_课程总览_索引.md（**配图数取磁盘实际计数，杜绝手工错填**；标记块外的人工内容一律保留）。**不回写 pipeline_state.json**——该文件由 runner 每步整体覆写，脚本写入会被覆盖（蓝本 §5.4）" }
+      "writes": ["_work/aggregated_sections.json", "课程交付/00_课程总览_索引.md", "课程交付/README.md", "课程交付/小节视频清单.csv", "课程交付/产品切片清单.csv", "课程交付/文案汇总.md", "课程交付/小节视频索引.md"],
+      "desc": "**汇总交付**（v0.5.1）+ 跨节状态自动汇总（W6/W5）：① 扫描 `_work/*/` 各节的记录链完整度 + verify 结论 + 配图实际计数 → `_work/aggregated_sections.json`；② 把「课程总览自动汇总」表以标记块（`<!-- vcp:auto-index:begin/end -->`）幂等写入 课程交付/00_课程总览_索引.md（**配图数取磁盘实际计数，杜绝手工错填**；标记块外的人工内容一律保留）；③ **课程级汇总产物**（不带 `第NN节_` 前缀，与节级产物区分）：`课程交付/README.md` 交付总索引（逐节交付物导航 + 全课合计 + 全课配图核对 + 待办，全量重生成）与合并清单 `小节视频清单.csv` / `产品切片清单.csv` / `文案汇总.md` / `小节视频索引.md`（由各节 `第NN节_*` 拼接/降级标题汇总；节级源消失时移除陈旧汇总）。**不回写 pipeline_state.json**——该文件由 runner 每步整体覆写，脚本写入会被覆盖（蓝本 §5.4）" }
   ]
 }

@@ -56,6 +56,14 @@ if hasattr(sys.stdout, "reconfigure"):  # Windows 控制台 UTF-8
 
 VIDEO_EXTS = [".mp4", ".mkv", ".mov", ".m4v", ".webm", ".flv", ".ts", ".avi", ".wmv", ".mpg", ".mpeg"]
 TEXT_DELIVER_EXTS = {".md", ".txt", ".csv"}
+IMAGE_EXTS = (".png", ".jpg", ".jpeg")
+# 课程级汇总产物（**跨节**内容，文件名不带章节号）。
+# 节级过滤时一律排除——否则「单节拆解执行」会把别节内容计进本节：
+# 计数虚高、门禁假报，严重时「别节的敏感内容阻断本节外发」。
+COURSE_LEVEL_FILES = frozenset({
+    "README.md", "00_课程总览_索引.md",
+    "小节视频清单.csv", "产品切片清单.csv", "文案汇总.md", "小节视频索引.md",
+})
 # 交付文档形态（与蓝本 §0.5 一致）
 DELIVERABLE_TYPES = {"讲义", "文档", "参考文档", "教程", "知识点汇总", "文案"}
 SOURCE_ENUM = {"file", "online", "live", "live_fallback", "device", "device_fallback"}
@@ -77,8 +85,8 @@ RE_ANCHOR = re.compile(r"▶\s*\*{0,2}\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\s*\*{0
 # 转录成品逐字稿的行首时间码（info-extract 输出格式：`[MM:SS] 文本`；无 ▶ 时的兜底锚点源）
 RE_TS_LINE = re.compile(r"^\s*\[(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\]\s*")
 RE_MD_HEAD = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.M)
-# 章节号提取（容忍 第7章 / 第07章 / 第7节 三种写法）
-RE_CHAPTER = re.compile(r"^\s*第\s*(\d+)\s*[章节]")
+# 章节号提取（容忍 第7章 / 第07章 / 第7节 三种写法）；组2＝单位字（章|节）
+RE_CHAPTER = re.compile(r"^\s*第\s*(\d+)\s*([章节])")
 # 「有意义的 OCR 文本」判据：至少 1 个汉字，或 2 个以上连续英数。
 # 纯图/构图页 OCR 常只吐标点噪声（如 `_\n_\n_`），这类不算「可核对」，
 # 否则文件名↔画面核对会大面积假告警（W10 门禁可信度前提）。
@@ -130,6 +138,24 @@ def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def rel_ws(ws: Path, p) -> str:
+    """路径相对工作区的展示写法；口径不一致时回退绝对路径，绝不抛错。
+
+    典型触发：macOS `/tmp` 与 `/private/tmp`（realpath 口径）、软链工作区——`ws`
+    已 `resolve()`，而记录（如 `cut_manifest.json` 的 `dest_dir`）可能是未解析写法，
+    直接 `relative_to` 会抛 `ValueError` 让整个 export 步崩掉；这本属展示层可容错之事。
+    """
+    p = Path(p)
+    try:
+        return str(p.relative_to(ws))
+    except ValueError:
+        pass
+    try:
+        return str(p.resolve().relative_to(ws))
+    except (ValueError, OSError):
+        return str(p)
+
+
 def sha256_file(path: Path) -> str:
     import hashlib
     h = hashlib.sha256()
@@ -150,6 +176,18 @@ def chapter_digits(name: str) -> str:
     """
     m = RE_CHAPTER.match(name or "")
     return (m.group(1).lstrip("0") or "0") if m else ""
+
+
+def section_prefix(section: str) -> str:
+    """节级产物文件名前缀 `第NN节_`（章号零填充到 2 位，与 W2 命名铁律同口径）。
+
+    `第7节` / `第07章` → `第07节_`；无章节号 → `<section>_`。用于把「节级产物」
+    与「课程级汇总产物」在**同一平铺目录**里区分开（单节拆解执行的前提）。
+    """
+    m = RE_CHAPTER.match(section or "")
+    if not m:
+        return ("%s_" % section) if section else ""
+    return "第%02d%s_" % (int(m.group(1)), m.group(2))
 
 
 def tokens(text: str) -> list:
@@ -241,23 +279,35 @@ def parse_anchors(md_text: str) -> list:
     return out
 
 
+def sec_only(files, digits: str, *, drop_course_level: bool = False) -> list:
+    """按章节号过滤文件列表——用于**多节共用的平铺目录**（`课程交付/*`）。
+
+    规则：带章节号的文件只保留与本节同号者；不带章节号的（无法判归属）一律保留，
+    除非 `drop_course_level=True`（节级隔离场景下排除课程级汇总产物）。
+    **不可**写成「匹配为空则返回全部」——那会让多节工作区里各节互相吞并
+    （实测 第08节 误计 第07节 的 4 张配图 / 误把别节逐字稿当锚点文档）。
+    """
+    files = sorted(files, key=lambda p: str(getattr(p, "name", p)))
+    if not digits:
+        return files
+    hit = [p for p in files if chapter_digits(p.name) == digits]
+    plain = [p for p in files if not chapter_digits(p.name)]
+    if drop_course_level:
+        plain = [p for p in plain if p.name not in COURSE_LEVEL_FILES]
+    return hit + plain
+
+
 def collect_records(rec_dir: Path, kind: str, digits: str = "") -> list:
     """列出某节在交付目录下的文件（按章节号过滤）。
 
-    匹配规则：**带章节号的文件**只保留与本节同号的；**不带章节号的文件**
-    （如 `讲义.md`）无法判归属，一律保留——这是「无章节号时按全部」的
-    可解释形态。**注意**：不可写成 `hit or files` 那种「匹配为空则回退全部」，
-    否则多节工作区里无自有文件的节会把别节文件全吞进来（实测 第08节 误计
-    第07节 的 4 张配图）。
+    匹配规则见 `sec_only`：**带章节号的文件**只保留与本节同号的；**不带章节号的
+    文件**（如 `讲义.md`）无法判归属，一律保留——这是「无章节号时按全部」的
+    可解释形态。
     """
     if not rec_dir.is_dir():
         return []
-    files = sorted(p for p in rec_dir.glob(kind) if p.is_file())
-    if digits:
-        plain = [p for p in files if not chapter_digits(p.name)]
-        hit = [p for p in files if chapter_digits(p.name) == digits]
-        return hit + plain
-    return files
+    files = [p for p in rec_dir.glob(kind) if p.is_file()]
+    return sec_only(files, digits)
 
 
 class Ctx:
@@ -277,6 +327,8 @@ class Ctx:
         self.shots_text = self.deliver / "讲义截图_文字页替代"
         self.shots_bak = self.deliver / "讲义截图_原始备份"
         self.pdf = self.deliver / "PDF"
+        self.dig = chapter_digits(self.section)     # 本节章节号（去前导零）
+        self.sec_prefix = section_prefix(self.section)  # 节级产物文件名前缀 第NN节_
 
     def all_dirs(self):
         return [
@@ -295,12 +347,49 @@ class Ctx:
     def rec(self, name: str) -> Path:
         return self.work / name
 
-    def shots_files(self) -> list:
-        """交付截图清单（`讲义截图/` 下 png/jpg，去边后的成品图）。"""
-        if not self.shots.is_dir():
+    # ── 节级视图（「单节拆解执行」的全部入口；平铺目录一律经此过滤，禁止裸 glob/iterdir）──
+
+    def mine(self, files) -> list:
+        """按本节章节号过滤任意文件列表（course-level 汇总产物一并排除）。"""
+        return sec_only(files, self.dig, drop_course_level=True)
+
+    def _files(self, d: Path, exts=None) -> list:
+        if not d.is_dir():
             return []
-        return sorted(p for p in self.shots.iterdir()
-                      if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+        out = [p for p in d.iterdir() if p.is_file()]
+        if exts:
+            out = [p for p in out if p.suffix.lower() in exts]
+        return self.mine(out)
+
+    def transcripts(self) -> list:
+        """本节的修正版逐字稿（`课程交付/逐字稿_修正版/`）。"""
+        return self._files(self.sub_transcript, (".md",))
+
+    def docs(self) -> list:
+        """本节的交付文档（`课程交付/讲义/`）。"""
+        return self._files(self.sub_doc, (".md",))
+
+    def shots_files(self) -> list:
+        """本节的交付截图（`讲义截图/` 下 png/jpg，去边后的成品图）。"""
+        return self._files(self.shots, IMAGE_EXTS)
+
+    def shots_text_files(self) -> list:
+        """本节的纯文字页替代原图（`讲义截图_文字页替代/`，不得被交付文档引用）。"""
+        return self._files(self.shots_text, IMAGE_EXTS)
+
+    def pdfs(self) -> list:
+        """本节的精排 PDF（`课程交付/PDF/`）。"""
+        return self._files(self.pdf, (".pdf",))
+
+    def deliver_files(self) -> list:
+        """本节在 `课程交付/` 下的全部交付文件（含子目录，按节过滤）。
+
+        供外发扫描等「按节界定外发面」的场景使用；课程级汇总产物被排除，
+        避免「别节的敏感内容阻断本节」。
+        """
+        if not self.deliver.is_dir():
+            return []
+        return self.mine([p for p in self.deliver.rglob("*") if p.is_file()])
 
     def find_anchor_doc(self, explicit: str = "") -> tuple:
         """定位含视频时间锚点的逐字稿：显式指定 > 修正版逐字稿 > 转录成品逐字稿。
@@ -1029,9 +1118,11 @@ def cmd_crop(a) -> int:
 
     ctx.shots_bak.mkdir(parents=True, exist_ok=True)
     manifest, cropped, skipped = [], 0, 0
-    for src in sorted(ctx.shots.iterdir()):
-        if not src.is_file() or src.suffix.lower() not in (".jpg", ".jpeg", ".png"):
-            continue
+    mine = ctx.shots_files()   # 只处理**本节**截图：缺此过滤会重裁别节已裁好的图并污染 crop_manifest
+    if not mine:
+        log("  ⚠ `%s` 下未发现本节（%s）截图，去边步无操作——请确认 frame_pick 已按节命名归位"
+            % (ctx.shots.name, ctx.section))
+    for src in mine:
         bak = ctx.shots_bak / src.name
         if not bak.exists():          # 先备份原图（幂等：已备份不覆盖）
             shutil.copy2(src, bak)
@@ -1158,14 +1249,15 @@ def cmd_export(a) -> int:
     cw = read_json(ctx.rec("copywriting.json"), {}) or {}
     written = []
 
-    # 交付清单（始终产出）：逐字稿 + 交付文档 + 截图
-    transcript_docs = sorted(p for p in ctx.sub_transcript.glob("*.md")) if ctx.sub_transcript.is_dir() else []
-    deliver_docs = sorted(p for p in ctx.sub_doc.glob("*.md")) if ctx.sub_doc.is_dir() else []
-    shots = sorted(p for p in ctx.shots.iterdir()
-                   if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg")) if ctx.shots.is_dir() else []
+    # 交付清单（始终产出）：逐字稿 + 交付文档 + 截图（**只列本节**，见 Ctx 节级视图）
+    transcript_docs = ctx.transcripts()
+    deliver_docs = ctx.docs()
+    shots = ctx.shots_files()
 
-    lines = ["# %s 交付总索引" % ctx.section, "",
-             "> 由工作流 `video-to-content-pack` 于 %s 自动生成（源头记录见 `_work/%s/`）。" % (now_iso(), ctx.section), "",
+    lines = ["# %s 交付索引" % ctx.section, "",
+             "> 由工作流 `video-to-content-pack` 于 %s 自动生成（源头记录见 `_work/%s/`）。" % (now_iso(), ctx.section),
+             "> **本节级索引**：全部路径均为本节的 `%s*` 产物；课程级总索引见 `课程交付/README.md`（`consolidate` 汇总）。"
+             % ctx.sec_prefix, "",
              "## 交付物", "", "| 类别 | 文件 | 大小 |", "|---|---|---|"]
     for p in transcript_docs:
         lines.append("| 修正版逐字稿 | `%s` | %.1f KB |" % (p.name, p.stat().st_size / 1024))
@@ -1173,7 +1265,7 @@ def cmd_export(a) -> int:
         lines.append("| 交付文档 | `%s` | %.1f KB |" % (p.name, p.stat().st_size / 1024))
     if shots:
         lines.append("| 去边截图 | 共 %d 张（`讲义截图/`） | — |" % len(shots))
-    pdfs = sorted(ctx.pdf.glob("*.pdf")) if ctx.pdf.is_dir() else []
+    pdfs = ctx.pdfs()
     for p in pdfs:
         lines.append("| 精排 PDF | `%s` | %.1f KB |" % (p.name, p.stat().st_size / 1024))
 
@@ -1181,9 +1273,7 @@ def cmd_export(a) -> int:
     ill = read_json(ctx.rec("illustration_index.json"), None)
     if isinstance(ill, dict):
         ill = ill.get("items")
-    text_pages = sorted(p for p in ctx.shots_text.iterdir()
-                        if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg")) \
-        if ctx.shots_text.is_dir() else []
+    text_pages = ctx.shots_text_files()
     refs = set()
     for md in transcript_docs + deliver_docs:
         for m in RE_MD_IMG.finditer(md.read_text(encoding="utf-8")):
@@ -1211,20 +1301,20 @@ def cmd_export(a) -> int:
         for i, it in enumerate(cm["items"], 1):
             lines.append("| %d | `%s` | %.1f | %.1f | %.1f |"
                          % (i, it["filename"], it["start"], it["end"], it["duration"]))
-    idx_md = ctx.deliver / "README.md"
+    idx_md = ctx.deliver / ("%s交付索引.md" % ctx.sec_prefix)
     idx_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
     written.append(str(idx_md))
 
-    # 小节视频清单 CSV / 索引 MD（按粒度）
+    # 小节视频清单 CSV / 索引 MD（按粒度；**节级文件名带前缀**，多节互不覆盖）
     if cm.get("items"):
-        csv_path = ctx.deliver / "小节视频清单.csv"
+        csv_path = ctx.deliver / ("%s小节视频清单.csv" % ctx.sec_prefix)
         with csv_path.open("w", encoding="utf-8-sig", newline="") as fh:
             w = csv.writer(fh)
             w.writerow(["节次", "节标题", "段号", "段标题", "逐字稿对应标题", "文件名", "相对路径",
                         "起始", "结束", "时长_秒", "粒度来源"])
             for i, it in enumerate(cm["items"], 1):
                 title = Path(it["filename"]).stem
-                rel = str((Path(it["dest_dir"]) / it["filename"]).relative_to(ctx.ws))
+                rel = rel_ws(ctx.ws, Path(it["dest_dir"]) / it["filename"])
                 w.writerow([ctx.section, ctx.section, i, title, it.get("transcript_title", ""),
                             it["filename"], rel, "%.2f" % it["start"], "%.2f" % it["end"],
                             "%.2f" % it["duration"], it.get("basis", "")])
@@ -1237,11 +1327,12 @@ def cmd_export(a) -> int:
             idx_lines.append("%d. **%s**（%.1f–%.1f 秒，%.1f 秒）" % (i, t, it["start"], it["end"], it["duration"]))
             if it.get("product_name"):
                 idx_lines.append("   - 产品：%s" % it["product_name"])
-        (ctx.deliver / "小节视频索引.md").write_text("\n".join(idx_lines) + "\n", encoding="utf-8")
-        written.append(str(ctx.deliver / "小节视频索引.md"))
+        idx_sect = ctx.deliver / ("%s小节视频索引.md" % ctx.sec_prefix)
+        idx_sect.write_text("\n".join(idx_lines) + "\n", encoding="utf-8")
+        written.append(str(idx_sect))
 
         if any(it.get("product_name") for it in cm["items"]):
-            pcsv = ctx.deliver / "产品切片清单.csv"
+            pcsv = ctx.deliver / ("%s产品切片清单.csv" % ctx.sec_prefix)
             with pcsv.open("w", encoding="utf-8-sig", newline="") as fh:
                 w = csv.writer(fh)
                 w.writerow(["产品名", "对应节次", "段号", "视频文件", "起始", "结束", "时长_秒", "文案文件"])
@@ -1271,18 +1362,20 @@ def cmd_export(a) -> int:
             if e.get("compliance_notes"):
                 cl += ["", "**合规提示**：" + "；".join(map(str, e["compliance_notes"]))]
             cl.append("")
-        (ctx.deliver / "文案汇总.md").write_text("\n".join(cl) + "\n", encoding="utf-8")
-        written.append(str(ctx.deliver / "文案汇总.md"))
+        cw_path = ctx.deliver / ("%s文案汇总.md" % ctx.sec_prefix)
+        cw_path.write_text("\n".join(cl) + "\n", encoding="utf-8")
+        written.append(str(cw_path))
 
-    # 目录/产品差异报告（有则归档到交付区，便于交付时一并查阅）
+    # 目录/产品差异报告（有则归档到交付区，便于交付时一并查阅；节级文件名带前缀）
     for src_name, dst_name in (("catalog_diff.json", "目录差异报告.md"),
                                ("product_catalog_diff.json", "产品切片差异报告.md")):
         rec = read_json(ctx.rec(src_name), None)
         if rec:
             body = rec.get("report_md") if isinstance(rec, dict) else None
             if body:
-                (ctx.deliver / dst_name).write_text(str(body), encoding="utf-8")
-                written.append(str(ctx.deliver / dst_name))
+                dst = ctx.deliver / ("%s%s" % (ctx.sec_prefix, dst_name))
+                dst.write_text(str(body), encoding="utf-8")
+                written.append(str(dst))
 
     # 视频时间轴与来源说明（W12：列为**独立交付物**，讲义只留一行指针，不把大表塞进每章）
     ing = read_json(ctx.rec("ingestion_manifest.json"), {}) or {}
@@ -1315,19 +1408,21 @@ def cmd_export(a) -> int:
             tl.append("| %d | `%s` | %.1f | %.1f | %.1f | %s |"
                       % (i, it["filename"], it["start"], it["end"], it["duration"], it.get("basis", "")))
         tl.append("")
-    tl_path = ctx.deliver / "视频时间轴与来源说明.md"
+    tl_path = ctx.deliver / ("%s视频时间轴与来源说明.md" % ctx.sec_prefix)
     tl_path.write_text("\n".join(tl) + "\n", encoding="utf-8")
     written.append(str(tl_path))
 
     write_json(ctx.rec("export_manifest.json"), {
         "section": ctx.section, "generated_at": now_iso(),
+        "scope": "section", "sec_prefix": ctx.sec_prefix,
+        "note": "节级产物一律以 sec_prefix 开头；课程级汇总产物（README/合并清单）由 consolidate 步生成。",
         "granularity": cm.get("granularity") or a.granularity,
         "copywriting": bool(entries), "catalog": bool(catalog), "product_catalog": bool(pcatalog),
         "files": written,
     })
     log("  ✓ 导出完成，共 %d 个文件：" % len(written))
     for p in written:
-        log("      %s" % Path(p).relative_to(ctx.ws))
+        log("      %s" % rel_ws(ctx.ws, p))
     return 0
 
 
@@ -1342,18 +1437,18 @@ def cmd_render(a) -> int:
         return 0
     ctx.pdf.mkdir(parents=True, exist_ok=True)
 
-    candidates = []
-    for d in (ctx.sub_doc, ctx.sub_transcript):
-        if d.is_dir():
-            candidates += sorted(d.glob("*.md"))
+    candidates = ctx.docs() + ctx.transcripts()   # 只渲染**本节**交付物（节级拆解）
     if not candidates:
-        log("  ⚠ 未找到可渲染的 Markdown 交付物（%s / %s），跳过" % (ctx.sub_doc, ctx.sub_transcript))
+        log("  ⚠ 未找到本节（%s）可渲染的 Markdown 交付物（%s / %s），跳过"
+            % (ctx.section, ctx.sub_doc, ctx.sub_transcript))
         write_json(ctx.rec("render_manifest.json"),
                    {"section": ctx.section, "items": [], "note": "无 Markdown 交付物"})
         return 0
 
     items, ok, fail = [], 0, 0
     for md in candidates:
+        if not md.name.startswith(ctx.sec_prefix):
+            log("  ⚠ 命名不合节级规范（缺前缀 `%s`）：%s" % (ctx.sec_prefix, md.name))
         out = ctx.pdf / (md.stem + ".pdf")
         title = md.stem.replace("_", " ")
         proc = kit_call(["md-pdf", "-i", str(md), "-o", str(out), "-t", title])
@@ -1365,7 +1460,7 @@ def cmd_render(a) -> int:
         log("  %s %s" % ("✓" if good else "✗", md.name))
 
     write_json(ctx.rec("render_manifest.json"), {
-        "section": ctx.section, "generated_at": now_iso(),
+        "section": ctx.section, "generated_at": now_iso(), "scope": "section",
         "renderer": "doc-layout-aesthetics · md-pdf（Markdown→中文精排 PDF；图片按相对路径内联）",
         "output_dir": str(ctx.pdf), "stats": {"ok": ok, "failed": fail}, "items": items,
     })
@@ -1385,10 +1480,11 @@ def cmd_cloud_upload(a) -> int:
     if a.cloud_upload != "tencent":
         log("  · cloud_upload=off，跳过云端上传")
         return 0
-    docs = sorted(ctx.sub_doc.glob("*.md")) if ctx.sub_doc.is_dir() else []
+    docs = ctx.docs()   # 只上传**本节**交付文档：缺此过滤会把别节文档一并外发（严重）
     if not docs:
         log("  ⚠ 无可上传的交付文档，跳过")
-        write_json(ctx.rec("cloud_manifest.json"), {"section": ctx.section, "items": [], "note": "无交付文档"})
+        write_json(ctx.rec("cloud_manifest.json"),
+                   {"section": ctx.section, "scope": "section", "items": [], "note": "无交付文档"})
         return 0
     items = []
     for md in docs:
@@ -1398,7 +1494,8 @@ def cmd_cloud_upload(a) -> int:
                       "note": "（显式外发：命中敏感信息时由 kit 外发闸门阻断，须 --confirm-raw 确认）"})
         log("  %s %s" % ("✓" if proc.returncode == 0 else "✗", md.name))
     write_json(ctx.rec("cloud_manifest.json"), {"section": ctx.section, "generated_at": now_iso(),
-                                                "target": "腾讯文档（docs.qq.com）", "items": items})
+                                                "scope": "section", "target": "腾讯文档（docs.qq.com）",
+                                                "items": items})
     bad = [i for i in items if not i["ok"]]
     if bad:
         log("  ⚠ %d 份上传未成功（常见的非缺陷原因：宿主未连接腾讯文档 / 命中敏感被闸门阻断）。"
@@ -1418,28 +1515,39 @@ _SCAN_HIT = "汇总："
 
 def cmd_desen_gate(a) -> int:
     ctx = Ctx(a.workspace, a.section)
+    scope = a.scope
     if a.desen_gate == "off":
         log("  ⚠ desen_gate=off：交付物**未经**本地敏感信息扫描（用户显式关闭，风险自负）")
-        write_json(ctx.rec("desen_report.json"), {"section": ctx.section, "skipped": True,
+        write_json(ctx.rec("desen_report.json"), {"section": ctx.section, "scope": scope, "skipped": True,
                                                   "reason": "desen_gate=off（用户显式关闭）"})
         return 0
 
-    targets = []
-    if ctx.deliver.is_dir():
-        targets.append(ctx.deliver)
-    text_files = []
-    for d in (ctx.deliver, ctx.work / "交付"):
-        if d.is_dir():
-            text_files += [p for p in d.rglob("*") if p.is_file() and p.suffix.lower() in TEXT_DELIVER_EXTS]
-    if not targets and not text_files:
+    work_deliver = ctx.work / "交付"      # 转录成品逐字稿（按节路径，天然归属本节）
+    dirs, files = [], []
+    if scope == "workspace":
+        # 课程级外发（「汇总交付」后整包发送）：`课程交付/` 全量递归
+        if ctx.deliver.is_dir():
+            dirs.append(ctx.deliver)
+            files += [p for p in ctx.deliver.rglob("*") if p.is_file()]
+    else:
+        # 节级（默认）：只扫**本节**交付物。课程级汇总产物（README / 合并清单）被排除——
+        # 它们含别节内容，计入会让「别节的敏感内容阻断本节」，与单节拆解执行相悖。
+        files = ctx.deliver_files()
+    if work_deliver.is_dir():
+        files += [p for p in work_deliver.rglob("*") if p.is_file()]
+
+    if not dirs and not files:
         log("  ⚠ 未发现待扫描的交付物（课程交付/ 为空），跳过并将跳过写入报告")
-        write_json(ctx.rec("desen_report.json"), {"section": ctx.section, "targets": [], "clean": None,
-                                                  "note": "无交付物"})
+        write_json(ctx.rec("desen_report.json"), {"section": ctx.section, "scope": scope,
+                                                  "targets": [], "clean": None, "note": "无交付物"})
         return 0
 
+    text_files = [p for p in files if p.suffix.lower() in TEXT_DELIVER_EXTS]
+    binary_files = [p for p in files if p.suffix.lower() in (set(IMAGE_EXTS) | {".pdf"})]
     results, hit_detail, clean_all = [], [], True
-    # ① 目录级扫描（快）：命中则确定性阻断；出现「未发现」标记则通过
-    for d in targets:
+
+    # ① 目录级扫描（仅课程级；快）：命中即确定性阻断，出现「未发现」标记即通过
+    for d in dirs:
         proc = kit_call(["desen", "scan", str(d), "--recursive"])
         out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
         results.append({"target": str(d), "mode": "dir", "rc": proc.returncode, "output": out[-4000:]})
@@ -1447,9 +1555,9 @@ def cmd_desen_gate(a) -> int:
             clean_all = False
             hit_detail.append({"target": str(d), "output": out[-4000:]})
         elif _SCAN_CLEAN not in out:
-            clean_all = None  # 无法判定 → 降级逐文件扫描
-    # ② 目录扫描无法判定 → 逐文件扫描（单文件扫描必定产出明确标记）
-    if clean_all is None:
+            clean_all = None          # 无法判定 → 降级逐文件扫描
+    # ② 文本交付物逐文件扫描（单文件扫描必定产出明确标记；节级模式下这是主路径）
+    if clean_all is None or not dirs:
         clean_all = True
         for f in sorted(set(text_files)):
             proc = kit_call(["desen", "scan", str(f)])
@@ -1461,17 +1569,32 @@ def cmd_desen_gate(a) -> int:
             elif _SCAN_CLEAN not in out:
                 clean_all = False
                 hit_detail.append({"target": str(f), "output": out[-2000:] or "（扫描无有效输出，按 fail-safe 判定）"})
+    # ③ 影像 / PDF：desen 不做 OCR，无法自动判定 → 显式记为「待人工确认」，绝不静默算过
+    if binary_files:
+        results.append({
+            "target": "%d 个影像/PDF 文件" % len(binary_files), "mode": "manual-required", "rc": 0,
+            "samples": [p.name for p in sorted(binary_files)[:5]],
+            "output": "desen 对影像/图片型 PDF 不做 OCR，无法自动判定；须先 preprocess 识别为文本再纳入脱敏，"
+                      "原始图片/图片型 PDF **严禁外传**",
+        })
 
     report = {
-        "section": ctx.section, "generated_at": now_iso(),
+        "section": ctx.section, "generated_at": now_iso(), "scope": scope,
         "policy": "外发必扫 DESEN 铁律（SOUL.md 常驻规则 / SKILL.md 硬约束）——交付物外发前强制扫描",
-        "targets": [str(t) for t in targets], "text_files": [str(p) for p in sorted(set(text_files))],
+        "scope_note": ("课程级：课程交付/ 全量递归" if scope == "workspace"
+                       else "节级：仅本节交付物（排除课程级汇总产物）"),
+        "targets": [str(t) for t in dirs], "text_files": [str(p) for p in sorted(set(text_files))],
+        "binary_files": [str(p) for p in sorted(set(binary_files))],
+        "manual_required": bool(binary_files),
         "clean": bool(clean_all), "hits": hit_detail, "runs": results,
     }
     write_json(ctx.rec("desen_report.json"), report)
 
     if clean_all:
         log("  ✓ 交付物本地敏感信息扫描通过（未发现已知敏感标识符）→ desen_report.json")
+        if binary_files:
+            log("  ⚠ %d 个影像/PDF 文件 desen 不做 OCR、无法自动判定，须人工确认后方可外发"
+                % len(binary_files))
         return 0
     log("  ✗ 交付物命中敏感信息，已按铁律**阻断交付**：")
     for h in hit_detail:
@@ -1809,8 +1932,126 @@ def _auto_index_block(ctx, sections) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _sec_sources(deliver: Path, name: str) -> list:
+    """收集各节的节级同类产物（`第NN节_<name>`）。
+
+    `name` 前的 `*` 会匹配空串，故课程级同名文件（`<name>` 本体）也命中——
+    用 `chapter_digits()` 过滤，只认带章节号前缀的文件。
+    """
+    if not deliver.is_dir():
+        return []
+    return sorted(p for p in deliver.glob("*%s" % name)
+                  if p.is_file() and chapter_digits(p.name))
+
+
+def _merge_csv(deliver: Path, name: str) -> dict:
+    """各节 CSV → 课程级同名 CSV（表头保留一次，按节号升序拼接）。"""
+    srcs, out = _sec_sources(deliver, name), deliver / name
+    if not srcs:
+        removed = out.is_file()
+        if removed:      # 源已消失（某节改回 granularity=none）→ 清掉陈旧汇总，避免误导
+            out.unlink()
+        return {"file": str(out), "written": False, "rows": 0, "sections": 0, "removed_stale": removed}
+    header, rows = None, []
+    for p in srcs:
+        with p.open(encoding="utf-8-sig", newline="") as fh:
+            data = [r for r in csv.reader(fh) if r]
+        if not data:
+            continue
+        if header is None:
+            header = data[0]
+        rows += data[1:]
+    with out.open("w", encoding="utf-8-sig", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(header or [])
+        w.writerows(rows)
+    return {"file": str(out), "written": True, "rows": len(rows), "sections": len(srcs)}
+
+
+def _merge_md(deliver: Path, name: str, title: str, intro: str) -> dict:
+    """各节 Markdown → 课程级同名 MD（各节内容降为二级标题，剥掉自身的 H1/引言块）。"""
+    srcs, out = _sec_sources(deliver, name), deliver / name
+    if not srcs:
+        removed = out.is_file()
+        if removed:
+            out.unlink()
+        return {"file": str(out), "written": False, "sections": 0, "removed_stale": removed}
+    parts = ["# %s" % title, "", "> %s" % intro,
+             "> 由 `video-to-content-pack` 的 `consolidate` 步汇总生成（%s），**勿手工编辑**。" % now_iso(), ""]
+    for p in srcs:
+        body = p.read_text(encoding="utf-8").splitlines()
+        while body and (not body[0].strip() or body[0].startswith("# ") or body[0].startswith(">")):
+            body.pop(0)      # 剥掉源文件自身的一级标题与引言块，改挂到本节二级标题下
+        parts += ["## %s" % (p.stem.split("_")[0]), ""] + body + [""]
+    out.write_text("\n".join(parts).rstrip() + "\n", encoding="utf-8")
+    return {"file": str(out), "written": True, "sections": len(srcs)}
+
+
+def _course_index(ctx: Ctx, sections, total) -> str:
+    """课程级交付总索引（`课程交付/README.md`，跨节汇总，**全量重生成**）。"""
+    def link(name):
+        return "[`%s`](%s)" % (name, name) if (ctx.deliver / name).is_file() else "—"
+
+    lines = ["# 课程交付总索引", "",
+             "> 由 `video-to-content-pack` 的 `consolidate` 步于 %s 汇总生成——**本文件全量重生成，勿手工编辑**；"
+             % now_iso(),
+             "> 人工内容请写入 `00_课程总览_索引.md`（该文件的自动区块之外）。",
+             "> 命名约定：**节级产物一律以 `第NN节_` 前缀命名，课程级汇总产物（本文件与合并清单）不带前缀**。",
+             "> 权威计数见 `_work/aggregated_sections.json`。", "",
+             "## 一、课程合计", "", "| 项 | 数量 |", "|---|---|",
+             "| 节数 | %d |" % total["sections"],
+             "| 交付文档 | %d |" % total["docs"],
+             "| 修正版逐字稿 | %d |" % total["transcripts"],
+             "| 配图（去边后） | %d |" % total["shots"],
+             "| 纯文字页替代原图 | %d |" % total["shots_text_only"],
+             "| 配图索引有效条目 | %d |" % total["illustrations"],
+             "| 机械校验 硬失败 / 软告警 | %d / %d |" % (total["verify_failed"], total["verify_warned"]),
+             "", "## 二、逐节交付物导航", "",
+             "| 节 | 交付索引 | 时间轴与来源 | 小节视频清单 | 文案汇总 | 配图 | 校验(失败/警告) | 记录链 |",
+             "|---|---|---|---|---|---|---|---|"]
+    for s in sections:
+        pre = section_prefix(s["section"])
+        vf, vw = s["verify_failed"], s["verify_warned"]
+        cell = "未校验" if vf is None else "%d / %d" % (vf, vw or 0)
+        lines.append("| %s | %s | %s | %s | %s | %d | %s | %d/%d |" % (
+            s["section"], link("%s交付索引.md" % pre), link("%s视频时间轴与来源说明.md" % pre),
+            link("%s小节视频清单.csv" % pre), link("%s文案汇总.md" % pre),
+            s["shots"], cell, len(s["records_present"]),
+            len(s["records_present"]) + len(s["records_missing"])))
+
+    # 全课配图核对（W5：一律实际计数，杜绝手工填错）
+    refs = set()
+    if ctx.deliver.is_dir():
+        for md in sorted(p for p in ctx.deliver.rglob("*.md")
+                         if p.is_file() and p.name not in COURSE_LEVEL_FILES):
+            for m in RE_MD_IMG.finditer(md.read_text(encoding="utf-8")):
+                raw = m.group(1).strip()
+                if not raw.startswith(("http://", "https://")):
+                    refs.add(str((md.parent / raw).resolve()))
+    lines += ["", "## 三、配图核对（自动计数，勿手工填写）", "",
+              "| 范围 | 磁盘截图 | 交付文档引用（去重） | 文字页替代 | 索引有效条目 |",
+              "|---|---|---|---|---|",
+              "| **全课** | %d | %d | %d | %d |" % (
+                  total["shots"], len(refs), total["shots_text_only"], total["illustrations"])]
+
+    todo = []
+    if total["sections_without_verify"]:
+        todo.append("未做机械校验的节：%s（该节 `verify` 步未执行）"
+                    % "、".join(total["sections_without_verify"]))
+    if total["verify_failed"]:
+        todo.append("仍有机械校验硬失败 %d 项——逐节见 `_work/<节>/verify_report.json`" % total["verify_failed"])
+    lines += ["", "## 四、待办", ""]
+    lines += (["- %s" % t for t in todo] if todo else ["- 无（各节机械校验硬项均通过）"])
+    lines += ["- 语义项（图文位置判据 / 配图三条标准 / 形态结构 / 文案合规）须在确认门逐项复核，见各节 `verify_report.json`。"]
+    return "\n".join(lines) + "\n"
+
+
 def cmd_consolidate(a) -> int:
-    """汇总各节状态 → `_work/aggregated_sections.json` + 交付区自动索引区块。
+    """汇总各节状态 → `_work/aggregated_sections.json` + `课程交付/` 课程级汇总产物。
+
+    「单节拆解执行 → 汇总交付」的收口步：各节产物带 `第NN节_` 前缀（export 生成），
+    本步**跨节汇总**出课程级产物（`README.md` 交付总索引 + 合并的清单/索引，均不带前缀），
+    全部全量重生成以保证幂等。
 
     为何不写 `pipeline_state.json`：该文件由 runner 独占（每步 `_save()` 用内存态
     整体覆写），脚本侧写入会被下一次保存覆盖，属竞态。故汇总落**独立记录**
@@ -1858,22 +2099,40 @@ def cmd_consolidate(a) -> int:
         "verify_warned": sum(s["verify_warned"] or 0 for s in sections),
         "sections_without_verify": [s["section"] for s in sections if s["verify_failed"] is None],
     }
+    # ── 课程级汇总交付（「单节拆解执行 → 汇总交付」）──
+    # 节级产物带 `第NN节_` 前缀（export 生成），课程级产物不带前缀（本步生成，全量重生成保幂等）
+    ctx.deliver.mkdir(parents=True, exist_ok=True)
+    (ctx.deliver / "README.md").write_text(_course_index(ctx, sections, total), encoding="utf-8")
+    course = {
+        "readme": str(ctx.deliver / "README.md"),
+        "小节视频清单.csv": _merge_csv(ctx.deliver, "小节视频清单.csv"),
+        "产品切片清单.csv": _merge_csv(ctx.deliver, "产品切片清单.csv"),
+        "文案汇总.md": _merge_md(ctx.deliver, "文案汇总.md", "全课文案汇总",
+                                 "由各节 `第NN节_文案汇总.md` 汇总；合规提示须人工核对后方可外发。"),
+        "小节视频索引.md": _merge_md(ctx.deliver, "小节视频索引.md", "全课小节视频索引",
+                                  "由各节 `第NN节_小节视频索引.md` 汇总；完整时间轴见各节"
+                                  " `第NN节_视频时间轴与来源说明.md`。"),
+    }
+
     write_json(work_root / "aggregated_sections.json", {
         "workflow": "video-to-content-pack", "generated_at": now_iso(),
         "note": "跨节状态汇总（W6）。pipeline_state.json 由 runner 独占，脚本不回写以避免竞态覆盖。",
-        "index": "课程交付/00_课程总览_索引.md", "sections": sections, "total": total,
+        "index": "课程交付/00_课程总览_索引.md",
+        "course_deliverables": course,
+        "sections": sections, "total": total,
     })
 
     # 自动索引区块（标记包裹，幂等；无标记时追加，绝不覆盖人工内容）
     idx = ctx.deliver / "00_课程总览_索引.md"
-    ctx.deliver.mkdir(parents=True, exist_ok=True)
     block = _auto_index_block(ctx, sections)
     if idx.is_file():
         text = idx.read_text(encoding="utf-8")
         if INDEX_BEGIN in text and INDEX_END in text:
             head = text.split(INDEX_BEGIN)[0]
             tail = text.split(INDEX_END, 1)[1]
-            idx.write_text(head + block + tail, encoding="utf-8")
+            # block 自身以 \n 结尾，而 tail 通常也以 \n 开头——不归一化就会**每次重跑多出一个空行**
+            # （尾部空行无限累积，属非幂等）。故 head 去尾空行补两行、tail 去首空行。
+            idx.write_text(head.rstrip() + "\n\n" + block + tail.lstrip("\n"), encoding="utf-8")
         else:
             idx.write_text(text.rstrip() + "\n\n" + block, encoding="utf-8")
     else:
@@ -1884,6 +2143,20 @@ def cmd_consolidate(a) -> int:
            total["verify_failed"], total["verify_warned"]))
     log("  ✓ 已落盘：%s" % (work_root / "aggregated_sections.json").relative_to(ctx.ws))
     log("  ✓ 自动索引区块已写入：%s（标记 %s…%s）" % (idx.relative_to(ctx.ws), INDEX_BEGIN, INDEX_END))
+    log("  ✓ 课程级汇总交付（节级产物带 `第NN节_` 前缀，课程级不带前缀）：")
+    log("      %s ← 逐节导航 + 全课合计 + 配图核对（全量重生成）"
+        % (ctx.deliver / "README.md").relative_to(ctx.ws))
+    for name, v in course.items():
+        if name == "readme":
+            continue
+        rel = str((ctx.deliver / name).relative_to(ctx.ws))
+        if v.get("written"):
+            log("      %s ← 合并 %d 节%s" % (rel, v["sections"],
+                                          ("，%d 行" % v["rows"]) if "rows" in v else ""))
+        elif v.get("removed_stale"):
+            log("      %s 已移除（各节源均不存在，避免陈旧汇总误导）" % rel)
+        else:
+            log("      %s 未生成（各节无对应产物）" % rel)
     if total["sections_without_verify"]:
         log("  ⚠ 未做校验的节：%s" % "、".join(total["sections_without_verify"]))
     return 0
@@ -1929,10 +2202,11 @@ def cmd_verify(a) -> int:
 
     # ═══ 门禁 1：引用完整性 ═══
     gate(1, "引用完整性")
-    docs = list(ctx.sub_doc.glob("*.md")) if ctx.sub_doc.is_dir() else []
-    trans = list(ctx.sub_transcript.glob("*.md")) if ctx.sub_transcript.is_dir() else []
-    add("交付文档存在（课程交付/讲义/*.md）", bool(docs), "%d 份" % len(docs))
-    add("修正版逐字稿存在（课程交付/逐字稿_修正版/*.md）", bool(trans), "%d 份" % len(trans))
+    # 节级视图（Ctx.docs/transcripts）：平铺交付目录只取**本节**文件，多节不互相串味
+    docs = ctx.docs()
+    trans = ctx.transcripts()
+    add("交付文档存在（课程交付/讲义/，本节）", bool(docs), "%d 份" % len(docs))
+    add("修正版逐字稿存在（课程交付/逐字稿_修正版/，本节）", bool(trans), "%d 份" % len(trans))
 
     refs, missing, textpage_refs = set(), [], []
     for md in docs + trans:
@@ -1974,6 +2248,11 @@ def cmd_verify(a) -> int:
         ("不规范 %d 张：%s" % (len(bad_names), ", ".join(bad_names[:5]))) if bad_names else "全部合规")
     add("章号/图号零填充一致（无 1 位与 2 位混用）", not pad_mix,
         "宽度：章 %s / 图 %s" % (sorted(pads_ch), sorted(pads_idx)))
+    # 节级产物必须带节前缀——「单节拆解执行」的前提：平铺目录里靠前缀区分归属
+    unprefixed = [p.name for p in (docs + trans) if not p.name.startswith(ctx.sec_prefix)]
+    add("节级产物文件名带节前缀（%s）" % ctx.sec_prefix, not unprefixed,
+        ("缺前缀 %d 个：%s" % (len(unprefixed), ", ".join(unprefixed[:5]))) if unprefixed
+        else "全部合规", level="soft")
     if nrep is None:
         add("文件名↔画面一致性（需先跑 name-check 步）", False,
             "缺少 naming_report.json", level="soft")
@@ -2013,16 +2292,8 @@ def cmd_verify(a) -> int:
 
     # ═══ 门禁 4：配图覆盖（知识点段 → 配图，W7） ═══
     gate(4, "配图覆盖")
-    sec_dig = chapter_digits(ctx.section)
-
-    def _mine(md_path):
-        """只校验本节文档（按章节号匹配，兼容第7章/第07节两种零填充写法）。"""
-        return (not sec_dig) or chapter_digits(md_path.name) == sec_dig
-
     uncovered = []
-    for md in docs:
-        if not _mine(md):
-            continue
+    for md in docs:      # docs 已由 Ctx 按本节过滤（多节工作区不会串味），无需二次筛
         text = md.read_text(encoding="utf-8")
         heads = [h for h in RE_MD_HEAD.finditer(text)]
         lvl = 3 if any(len(h.group(1)) >= 3 for h in heads) else 2
@@ -2043,9 +2314,7 @@ def cmd_verify(a) -> int:
     n_src = n_dst = 0
     if adoc:
         n_src = len(parse_anchors(adoc.read_text(encoding="utf-8")))
-    for md in docs:
-        if not _mine(md):
-            continue
+    for md in docs:      # 同上：docs 已按节过滤
         n_dst += len(RE_ANCHOR.findall(md.read_text(encoding="utf-8")))
     if n_src:
         add("时间锚点已下传至交付文档（讲义内联 ▶）", n_dst > 0,
@@ -2056,20 +2325,23 @@ def cmd_verify(a) -> int:
     # ═══ 门禁 6：记录链·备份链·切片·外发·渲染·索引 ═══
     gate(6, "记录链 / 备份链 / 切片 / 外发 / 渲染 / 索引")
     if shots:
-        baks = {p.name for p in ctx.shots_bak.iterdir() if p.is_file()} if ctx.shots_bak.is_dir() else set()
-        add("去边前原图备份齐全（讲义截图_原始备份/）",
-            len(baks) >= len(shots), "备份 %d / 现图 %d" % (len(baks), len(shots)))
+        have = {p.name for p in ctx.shots_bak.iterdir() if p.is_file()} if ctx.shots_bak.is_dir() else set()
+        # 按「本节每张图是否都有备份」判定（旧写法比总数，多节共目录时会假通过）
+        missing_bak = sorted(Path(s).name for s in shots if Path(s).name not in have)
+        add("去边前原图备份齐全（讲义截图_原始备份/）", not missing_bak,
+            ("缺 %d 张：%s" % (len(missing_bak), ", ".join(missing_bak[:5]))) if missing_bak
+            else "本节 %d 张均已备份（备份目录共 %d 张，含其他节）" % (len(shots), len(have)))
 
     if cm.get("items"):
         items = cm["items"]
         add("切片文件全部存在", all(Path(i["dest_dir"], i["filename"]).is_file() for i in items),
             "%d 段" % len(items))
-        csv_path = ctx.deliver / "小节视频清单.csv"
+        csv_path = ctx.deliver / ("%s小节视频清单.csv" % ctx.sec_prefix)
         csv_rows = 0
         if csv_path.is_file():
             with csv_path.open(encoding="utf-8-sig", newline="") as fh:
                 csv_rows = max(0, sum(1 for _ in csv.reader(fh)) - 1)
-        idx_path = ctx.deliver / "小节视频索引.md"
+        idx_path = ctx.deliver / ("%s小节视频索引.md" % ctx.sec_prefix)
         idx_rows = 0
         if idx_path.is_file():
             idx_rows = len(re.findall(r"^\d+\.\s\*\*", idx_path.read_text(encoding="utf-8"), re.M))
@@ -2093,7 +2365,8 @@ def cmd_verify(a) -> int:
         except VcpError as exc:
             add("时长核验（需 ffmpeg）", False, str(exc))
 
-    required = ["run_context.json", "ingestion_manifest.json", "transcript_meta.json", "frame_index.json"]
+    required = ["run_context.json", "ingestion_manifest.json", "transcript_meta.json", "frame_index.json",
+                "export_manifest.json"]
     if a.granularity != "none":
         required += ["cut_plan.json", "cut_manifest.json"]
     miss = [r for r in required if not ctx.rec(r).is_file()]
@@ -2224,7 +2497,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--ffmpeg-bin", dest="ffmpeg_bin", default="")
     sp.set_defaults(func=cmd_cut)
 
-    sp = common(sub.add_parser("export", help="派生清单/索引/文案汇总/交付总索引"))
+    sp = common(sub.add_parser("export", help="派生**节级**清单/索引/文案汇总/交付索引/时间轴"))
     sp.add_argument("--granularity", default="none")
     sp.set_defaults(func=cmd_export)
 
@@ -2238,6 +2511,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = common(sub.add_parser("desen-gate", help="交付物外发前 DESEN 扫描（命中即阻断）"))
     sp.add_argument("--desen-gate", dest="desen_gate", default="on")
+    sp.add_argument("--scope", default="section", choices=["section", "workspace"],
+                    help="扫描范围：section=仅本节交付物（默认，单节拆解执行）；"
+                         "workspace=课程交付/ 全量递归（汇总交付后整包外发时用）")
     sp.set_defaults(func=cmd_desen_gate)
 
     sp = common(sub.add_parser("classify-slides",

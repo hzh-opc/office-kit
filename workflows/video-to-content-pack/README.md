@@ -9,12 +9,32 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | 0.5.0 |
+| 版本 | 0.5.1 |
 | 步骤数 | 31 = 机械 24 + 创作 7（其中 6 个来源摄取步按 `when` 互斥；`classify_slides`/`name_check` 按开关可跳过） |
 | requires | info-extract + summarize + doc-layout-aesthetics 组件 + office-kit 所用的虚拟环境（**唯一必需环境**，默认复用 `~/office-kit/.venv`，不自建） |
 | optional | `live` / `capture`（原生摄取已同步组件；`*_fallback` 保留为录制完整性兜底）；`vision`（整视频关键帧+VLM，按需显式调用） |
 | 关键 params | `workspace`（必填）/ `source` / `source_uri` / `section` / `deliverable_types` / `granularity` / `copywriting` / `digest` / `deliverable_render` / `cloud_upload` / `desen_gate` / `slide_classify` / `slide_ink_max` / `anchor_window` / `naming_check` / `naming_ocr` / `coverage_min_chars` / `whisper_model` / `device_duration` / `ffmpeg_bin` |
 | 不再需要 | ~~media 隔离环境~~（2026-09-22 起，仅作可选兜底：抽帧由 info-extract 完成、去边用套件 venv 的 PIL、ffmpeg 用套件 venv 的 imageio-ffmpeg） |
+
+## v0.5.1 工作区模型：单节拆解执行 → 汇总交付（2026-09-23）
+
+**定位**：一个工作区承载整门课，**执行单位是「节」、交付单位是「课程」**——每节以 `--param section=<节名>` 独立跑完整条流水线（可中断、可单节重跑、逐节推进），跑完一次性跑 `consolidate` 跨节汇总出课程级产物。步数与子命令数**均不变**（31 步 / 20 命令），改的是**归属与范围**。
+
+| 类别 | 命名 | 生成者 | 例子 |
+|---|---|---|---|
+| 节级产物 | `第NN节_` 前缀（章号零填充） | 各节流水线（`export` 等） | `第07节_讲义.md`、`第07节_图02_目录.png`、`第07节_交付索引.md`、`第07节_小节视频清单.csv` |
+| 课程级汇总产物 | **不带前缀** | `consolidate` | `README.md`、`小节视频清单.csv`、`文案汇总.md`、`00_课程总览_索引.md` |
+
+**四处必要修正**（都是「平铺目录 + 多节共工作区」暴露出来的真实缺陷）：
+
+| # | 缺陷 | 后果 | 修正 |
+|---|---|---|---|
+| 1 | `export` 把节级索引/清单写成**课程级文件名**（`README.md` / `小节视频清单.csv`…） | 多节逐节跑**互相覆盖**，只剩最后一节 | 节级产物统一 `第NN节_` 前缀；课程级产物移交 `consolidate` |
+| 2 | 列举 `课程交付/` 的代码**不按节过滤**（`export`/`render`/`verify`/`crop`） | 别节文件被计入本节（实测 `第08节` 误吞 `第07节` 4 张配图）；`crop` 还会**重裁别节已裁好的图** | 新增 `Ctx` 节级视图（`transcripts`/`docs`/`shots_files`/`shots_text_files`/`pdfs`/`deliver_files`），全部列举点改走它 |
+| 3 | `cloud-upload` 上传 `讲义/` 下**全部** md | 多节共目录时**把别节文档一并外发** | 改 `Ctx.docs()`（只上传本节） |
+| 4 | `desen-gate` 扫整个 `课程交付/` | 「**别节的敏感内容阻断本节**」，与单节拆解执行相悖 | 默认**节级范围**；课程级整包外发改跑 `--scope workspace` |
+
+配套：`consolidate` 增出课程级交付物（`README.md` 交付总索引：逐节导航 + 全课合计 + 全课配图核对 + 待办；合并 `小节视频清单.csv`/`产品切片清单.csv`/`文案汇总.md`/`小节视频索引.md`，全量重生成幂等、节级源消失则移除陈旧汇总）；`verify` 全部门禁改在节级视图下执行并新增软项「节级产物带前缀」。**新写任何列举 `课程交付/` 的代码，都必须走节级视图**。详见蓝本 §0.8。
 
 ## v0.5.0 新增的四道机械门（2026-09-23）
 
@@ -27,7 +47,7 @@
 | `name_check` | `name-check` | **命名三套不一致 + 文件名↔画面错位** | `naming_report.json`（零填充校验 + OCR 名实核对） |
 | `consolidate` | `consolidate` | **跨节状态靠手工补** `pipeline_state`；索引配图数手工填错 | `_work/aggregated_sections.json` + `00_课程总览_索引.md` 自动索引区块 |
 
-同时 `verify` 由「11 项机械校验」升级为 **6 项门禁**（引用完整性 / 命名规范与名实一致 / 最佳截取核对 / 配图覆盖 / 时间锚点下传 / 记录链等）：**硬项不过 `exit 3` 阻断交付，软项（W7/W10 类启发式判据）显式告警不阻断**；`export` 增出独立交付物 `课程交付/视频时间轴与来源说明.md`，并在交付总索引中以**磁盘实际计数**填配图数（不再手工填）。详见蓝本 §2.5–§2.7、§5.1、§5.4、§6。
+同时 `verify` 由「11 项机械校验」升级为 **6 项门禁**（引用完整性 / 命名规范与名实一致 / 最佳截取核对 / 配图覆盖 / 时间锚点下传 / 记录链等）：**硬项不过 `exit 3` 阻断交付，软项（W7/W10 类启发式判据）显式告警不阻断**；`export` 增出独立交付物 `课程交付/第NN节_视频时间轴与来源说明.md`，并在交付索引中以**磁盘实际计数**填配图数（不再手工填）。详见蓝本 §2.5–§2.7、§5.1、§5.4、§6。
 
 ## 执行模型（Agent + runner 协作）
 
@@ -123,6 +143,7 @@
 
 ## 蓝本同步状态
 
+- **v0.5.1（2026-09-23，工作区模型「单节拆解执行 → 汇总交付」）**：**步数与子命令数不变**（31 步 / 20 命令），改归属与范围——① 蓝本**新增 §0.8 工作区模型**（两条命名铁律 + 节级隔离硬约束 + 反面教材四条）；② `export` 产物全部改 `第NN节_` 前缀（交付索引 / 小节视频清单 / 产品切片清单 / 文案汇总 / 小节视频索引 / 时间轴 / 差异报告），课程级 `README.md` 与合并清单移交 `consolidate`；③ `tools/vcp.py` 新增 `sec_only()` / `section_prefix()` / `Ctx` 节级视图（`transcripts`/`docs`/`shots_files`/`shots_text_files`/`pdfs`/`deliver_files`）与 `rel_ws()`，`export`/`render`/`cloud-upload`/`crop`/`desen-gate`/`verify` 六处列举点全部改走节级视图；④ `desen-gate` 新增 `--scope {section,workspace}`（默认节级）；⑤ `consolidate` 增出课程级交付物（总索引 + 四个合并件，全量重生成幂等）；⑥ `verify` 门禁改节级视图 + 门禁 2 增软项「节级产物带前缀」+ 门禁 6 备份齐全改逐张核对；⑦ 蓝本 §0.4/§0.5/§3.4/§3.5/§3.6/§5.1/§5.3/§5.3b/§5.4/§6/§7/§9/§11.2/§11.3 同步，§11 末尾补 v0.5.1 验证记录；⑧ **夹具验证（双节 + 单节双模）中修 3 处缺陷**：`export` 因 `relative_to` 口径不一致（`/tmp` ↔ `/private/tmp`）抛 `ValueError` 崩溃（新增 `rel_ws()` 容错）、`00_课程总览_索引.md` 每次重跑多一个尾部空行（非幂等，改为归一化拼接）、门禁 6「原图备份齐全」在多节共目录下靠别节备份凑数而假通过（改为逐张核对）。
 - **v0.5.0（2026-09-23，配图/锚点/命名/汇总四道机械门）**：① 新增 `tools/vcp.py` 子命令 `classify-slides` / `anchor-check` / `name-check` / `consolidate`（16 → **20**）；② 契约 **27 → 31 步**（机械 20 → 24），新增 `classify_slides`（`frames_ocr` 后）/ `anchor_check`（`authoring` 后）/ `name_check`（`illustrate` 后）/ `consolidate`（末尾）；③ `verify` **11 项机械校验 → 6 项门禁**（硬项 `exit 3` 阻断、软项告警）；④ `export` 增出独立交付物《视频时间轴与来源说明.md》，交付总索引的配图数改为磁盘实际计数；⑤ 新增参数 `slide_classify` / `slide_ink_max` / `anchor_window` / `naming_check` / `naming_ocr` / `coverage_min_chars`；⑥ 蓝本新增 §2.5–§2.7、§5.4，改写 §6，§0.4/§0.5/§2/§3/§3.4/§3.6/§3.7/§5.1/§7/§9/§11 同步；⑦ `illustration-spec.md` 新增「十一 幻灯片价值分类器 / 十二 帧内容核对与最佳帧选择 / 十三 命名一致性」三节 + 终检清单三项 + 失效模式 9–11；⑧ **夹具验证中修 3 处缺陷**：`consolidate` 在缺 `verify_report.json` 时 `%d` 格式化崩溃（改显式「未校验」，不以 0 冒充通过）、`collect_records` 章节号匹配为空时回退全量导致多节工作区**别节文件被计入本节**（改为「仅保留无章节号文件」）、`verify` 门禁 2 在未做画面 OCR 核对时不再显示为通过（改软告警）。
 - **v0.4.0（2026-09-22，全量架构升级）**：① 契约重构——`requires.components` 补 `summarize`/`doc-layout-aesthetics`、`state_schema.records` 全面重写为 info-extract v0.6.4 的真实产物名（删除并不存在的 `course_raw/*_raw.states.tsv`、`unique_states.json`）、22 → **27 步**、agent 步 12 → 7、新增 `digest`/`render`/`cloud_upload`/`desen_gate` 步；② 新增 `tools/vcp.py`（16 子命令，机械步 runner 直跑）；③ kit.py 分发层修 6 处缺陷（引号/空格、dry-run 污染状态、组件步绕过外发闸门、`~` 不展开、无 sha256 指纹、无 `script` kind）+ 新增 `kit workflow check`（6 类契约自检）；④ 蓝本 §0.1–§0.4、§1.2、§2、§3.6、§5–§8、§11 全面同步；⑤ 本 README 同步至 0.4.0。
 - **v0.3.0（2026-09-22）**：① 蓝本由「工作区隐私隔离、不随仓库分发」改为**随工作流分发**——本体迁入 `workflows/video-to-content-pack/蓝本.md`（与 `workflow.json` / `illustration-spec.md` 同包），跨平台、跨设备可复用；frontmatter 版本 `v0.2.0 → v0.3.0`，两处硬编码 `~/Repositories` / `~/office-kit` 路径归一为 `<OFFICE_KIT>` 占位符；② 通用规范 `illustration-spec.md` 新增「七、配图四原则（存储与呈现层）」「八、渲染与导出纪律（源文件零硬换行·方案 C）」「九、布局校验标准（verify_layout）」「十、操作红线」，并补第二验证项目《细味情感拍人像·安菲菲》；③ 契约 `blueprint_doc` 改指 `./蓝本.md`。

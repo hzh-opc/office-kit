@@ -293,12 +293,21 @@ PY
     if command -v codebuddy >/dev/null 2>&1; then
       cli="$(command -v codebuddy)"
     else
+      # ⚠ 候选顺序：优先 dist/codebuddy-lite-wb.mjs（实测为可用入口），bin/codebuddy 作兜底。
+      # 根因：当前 WorkBuddy.app 的 cli/dist/ 只有 codebuddy-headless.js / codebuddy-lite-wb.mjs / lazy-*，
+      #       无 bin/codebuddy 引用的 ../dist/codebuddy 模块 → bin/codebuddy 执行 plugin 子命令时
+      #       MODULE_NOT_FOUND（--help 不触发，故无法用 --help 探测）。lite-wb.mjs 无 +x 位（经 node 运行），
+      #       故检测用 -e（存在）而非 -x（可执行）。
       for cand in \
+        "/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/dist/codebuddy-lite-wb.mjs" \
+        "$HOME/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/dist/codebuddy-lite-wb.mjs" \
+        "/Applications/CodeBuddy.app/Contents/Resources/app.asar.unpacked/cli/dist/codebuddy-lite-wb.mjs" \
+        "$HOME/Applications/CodeBuddy.app/Contents/Resources/app.asar.unpacked/cli/dist/codebuddy-lite-wb.mjs" \
         "/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy" \
         "$HOME/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy" \
         "/Applications/CodeBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy" \
         "$HOME/Applications/CodeBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy" ; do
-        [ -x "$cand" ] && { cli="$cand"; break; }
+        [ -e "$cand" ] && { cli="$cand"; break; }
       done
     fi
     if [ -z "$cli" ]; then
